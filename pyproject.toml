@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hierarchical_kick"
+version = "0.1.0"
+description = "U-Kick true-hierarchy kick face: 3-dim velocity-command high level + frozen low-level (cmd-only split from universal_tracking)"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "pyyaml",
+]
+
+[tool.setuptools.packages.find]
+include = ["hierarchical_kick*"]
+exclude = ["tests*", "hierarchical_kick.scripts"]
+
+[tool.setuptools.package-data]
+hierarchical_kick = [
+    "weights/*.pt",
+    "config/robots/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = "."

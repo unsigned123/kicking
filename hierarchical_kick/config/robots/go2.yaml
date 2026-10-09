@@ -1,0 +1,52 @@
+# [M23-REGISTRY] Go2 本体静态元数据注册表（每狗一文件；schema 权威 =
+# robots/embodiments.py，本文件字段名/合法键集与其 ENTRY_KEYS 严格一致）。
+#
+# run yaml 引用方式（scaling：接新狗 = 加 1 个本类文件 + run yaml 清单加 1 名）::
+#
+#     embodiments:
+#       - go2                # 名字引用 -> 本文件（stem 直配）
+#     embodiment_overrides:  # 可选：run 级差异浅合并（顶层同名字段整体替换）
+#       go2: {spawn_offset: [0.5, 0.0]}
+#
+# 内联完整 dict 条目仍合法（向后兼容，语义 = 完整覆盖、不与本文件合并）。
+# motion_glob/param_vector 相对路径按 run yaml 的 base_dir（包根）解析。
+name: go2
+urdf: /public/workspace/dlx_workspace/source/isaaclab_tasks/isaaclab_tasks/manager_based/pose_reconstruct/asset/go2/go2.urdf
+joint_map:                          # 恒等改名：canonical abad/hip/knee -> URDF hip/thigh/calf
+  FL: {abad: FL_hip_joint, hip: FL_thigh_joint, knee: FL_calf_joint}
+  FR: {abad: FR_hip_joint, hip: FR_thigh_joint, knee: FR_calf_joint}
+  RL: {abad: RL_hip_joint, hip: RL_thigh_joint, knee: RL_calf_joint}
+  RR: {abad: RR_hip_joint, hip: RR_thigh_joint, knee: RR_calf_joint}
+# actuator 与 data_collect 采集环境逐字段对齐（implicit 40/1 无 effort_limit）：
+# effort_limit 缺省 None -> ImplicitActuator 不下发限幅/驱动上限，回退
+# URDF per-joint effort（abad/hip 23.7、calf 45.43 Nm）——采集参考含
+# 45.4 Nm 后小腿峰值力矩，30.0 显式上限会力矩饱和误杀快步态（[AUDIT-M39]）。
+actuator: {type: implicit, stiffness: 40.0, damping: 1.0}
+# [M54-ACTIONS] SONIC 逐关节 action scale（自有动作输出端路线）：scale_j =
+# 0.25×effort_j/KP。effort = URDF per-joint 声明值（implicit 无显式
+# effort_limit 的回退真值）：abad/hip 23.7、knee(calf) 45.43 Nm；KP = 40
+# → abad/hip = 0.148、knee = 0.284。
+action_scale: sonic
+urdf_effort: {abad: 23.7, hip: 23.7, knee: 45.43}
+default_stance:                     # 规范 12 名（严格键集校验见 schema）
+  FL_abad: 0.0
+  FL_hip: 0.9
+  FL_knee: -1.8
+  FR_abad: 0.0
+  FR_hip: 0.9
+  FR_knee: -1.8
+  RL_abad: 0.0
+  RL_hip: 0.9
+  RL_knee: -1.8
+  RR_abad: 0.0
+  RR_hip: 0.9
+  RR_knee: -1.8
+spawn_offset: [0.0, 0.0]            # k3 规范位（同 env xy 摆放，两两间距 >=0.8m）
+spawn_height: 0.42
+fall_height: 0.15                   # [P3] 站高 0.227，余量 0.077
+base_body: base
+soft_joint_pos_limit_factor: 0.9    # schema 默认（显式落盘防漂移）
+mirror_prob: 0.0                    # [M23-MIRROR] sagittal 随机镜像 p（0=关）
+collision_group: 0
+motion_glob: data/motion/go2/*/*.npz          # Go2 分库 2289 clip；多本体分库口径见 motion.libs_manifest（manifest 权威）
+param_vector: data/embodiments/go2.json       # 38 维（Go2 = 全 1 名义）
