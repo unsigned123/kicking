@@ -197,4 +197,4 @@ def test_profile_construction_dispatch():
     legs = cyber.articulation_cfg.actuators["legs"]
     assert (legs.stiffness, legs.damping) == (25.0, 0.5)
     assert legs.saturation_effort == 12.0
-    assert cyber.articulation_cfg.init_state.pos[2] == 0.40
+    assert cyber.articulation_cfg.init_state.pos[2] == 0.30  # 几何站高校正

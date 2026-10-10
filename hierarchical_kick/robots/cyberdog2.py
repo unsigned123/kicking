@@ -127,7 +127,12 @@ def make_cyberdog2_track_profile(
             ),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.40),
+            # spawn z=0.30：几何站高 FK ≈0.236m（hip0.8/knee−1.5 × 腿段
+            # 0.12+0.174+足 r0.019），关节 scale 采样上限站高 ≈0.27——
+            # xiaomi 原值 0.40 造成每回合开局 0.16m 自由落体冲击瞬态
+            # （站姿探针实测 qd 冲至 31 rad/s + 身体反弹触地团灭），
+            # 按本包 URDF 几何校正（deviation 在案）。
+            pos=(0.0, 0.0, 0.30),
             joint_pos=dict(CYBERDOG2_DEFAULT_Q),
             joint_vel={".*": 0.0},
         ),
