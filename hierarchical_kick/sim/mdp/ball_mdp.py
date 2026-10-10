@@ -61,6 +61,13 @@
 #                       逐 env origin 相对）
 #   - wall_stuck               ← donor mdp/terminations.py:78-93（dist+speed
 #                       双条件）；**接口在位不挂载**（我方无墙，cfg 注释备用）
+#   - reset_ball_root_state    ← donor env/reset.py:257-280 语义（原挂在
+#                       ball_env_cfg，[X-HK5] 移入本模块——随机化/课程采样
+#                       逻辑需离线可测，wrapper 取数 + impl 纯函数同款纪律）
+#   - ball_spawn_d_max / ball_spawn_dist / ball_spawn_xy ← [X-HK5] 自建
+#                       （owner 指令 2026-10-10：球出生随机化 + 距离轴课程；
+#                       无 donor 对应——dist ~ U[d_min, d_max(t)] 的扩张
+#                       调度 = 课程本身，横向 U(±0.3) 复用 ball_xy_range 机制）
 # phase0 其余零权重项（goal_proximity/ball_heading_alignment/action_rate/
 # boundary 系/wall_stuck_penalty/undesired_contacts/opponent 系/ball_speed/
 # shoot 系）**不实现**（启用集 = owner 点名面）。
@@ -95,7 +102,7 @@ objects of the U-Kick env (``ball_env_cfg.Go2KickFlatEnvCfg``).
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # body 系旋转原语（见文件头：sim 路径 = isaaclab 原函数；离线 = vendored 等价面）。
 # 防呆：仅当绑定面确系 isaaclab 树内原函数时才走 isaaclab 分支——
@@ -134,6 +141,21 @@ GOAL_CENTER = (0.0, GOAL_Y)
 世界系 goal center = env.scene.env_origins[:, :2] + GOAL_CENTER（逐 env；
 与球 reset 的 default_root_state + env_origins 同帧同源——A100 10-env
 oracle 实测确诊：远端 env 用世界系常量判线/出界全错位）。"""
+
+DOG_SPAWN_XY = (0.0, 0.0)
+"""[X-HK5] 狗 spawn（env 系 xy）：原点、yaw=π/2 面朝球门（进攻轴 +y），
+固定不随机（owner 指令 2026-10-10）。单一位置定义：ball_env_cfg 消费于
+robot init_state（reset_base pose_range 钳零 → reset 后稳定回到），本文件
+reset_ball_root_state 消费于球出生位（狗前方沿 +y 推算）。"""
+
+CURRICULUM_D_MAX_START = 0.5
+"""[X-HK5] d_max 课程起点（规格公式定值 0.5）：warmup 起点 = 旧 H 臂饱和
+布局的狗-球距（近球快反馈），随训练线性扩张到全任务域。"""
+
+CURRICULUM_Y_MARGIN = 0.2
+"""[X-HK5] 球出生 y 上限 margin：``y ≤ GOAL_Y − CURRICULUM_Y_MARGIN``
+（防 reset 即在门内 → 首步假 goal；与固定 spawn BALL_SPAWN_XY 的
+GOAL_Y−0.2 同 margin 口径）。"""
 
 BALL_OUT_RADIUS = 6.0
 """球出界半径（球心水平距 goal center > 6m 终止；design §3.4）。"""
@@ -558,6 +580,60 @@ def _wall_stuck_impl(
 
 
 # ---------------------------------------------------------------------------
+# [X-HK5] 球 spawn 随机化 + 距离轴课程（owner 指令 2026-10-10；纯函数面，
+# tensor/float in-out 零 isaaclab 依赖 → 离线 pytest 直测）
+# ---------------------------------------------------------------------------
+
+
+def ball_spawn_d_max(
+    common_step_counter: float,
+    warmup_steps: float,
+    d_max_start: float = CURRICULUM_D_MAX_START,
+    d_max_final: float = 2.7,
+) -> float:
+    """d_max 课程调度（规格公式）：``d_max(t) = d_max_start + (d_max_final −
+    d_max_start) × clamp(t / warmup_steps, 0, 1)``。
+
+    t = env.common_step_counter（全局 env 步计数；reset 事件调用时读实时值）。
+    warmup_steps = warmup_iters × steps_per_iter（cfg 单源换算；steps_per_iter
+    口径 = 本栈实测 num_steps_per_env 24 步/it——common_step_counter 每环境
+    步 +1（manager_based_rl_env.py:249），24 步 rollout/it → 500it 处恰满域）。
+    课程语义：距离轴随机化本身就是课程——早期球近（近距快反馈），随训练
+    单调扩张到全任务域 d_max_final=2.7m。
+    """
+    frac = common_step_counter / max(warmup_steps, 1e-9)
+    frac = min(max(frac, 0.0), 1.0)
+    return d_max_start + (d_max_final - d_max_start) * frac
+
+
+def ball_spawn_dist(dist_u: torch.Tensor, d_min: float, d_max: float) -> torch.Tensor:
+    """[N] 球出生距离采样：``dist = d_min + U(0,1) × (d_max − d_min)``。
+
+    d_max < d_min（误配置）时退化为常量 d_min（防呆）。"""
+    lo = float(d_min)
+    hi = max(float(d_max), lo)
+    return lo + dist_u * (hi - lo)
+
+
+def ball_spawn_xy(
+    lateral_u: torch.Tensor,
+    dist: torch.Tensor,
+    lateral_half: float,
+    dog_spawn_x: float,
+    dog_spawn_y: float,
+    y_max: float,
+) -> torch.Tensor:
+    """[N,2] 球出生 env 系 xy：狗 spawn 前方沿 +y ``dist`` + 横向 U(±lateral_half)。
+
+    距离轴沿狗朝向（+y 进攻轴）；横向偏移独立采样（复用/扩展现有
+    kick_randomization.ball_xy_range 的 x 半幅通道）。y 支路 clamp ≤ y_max
+    （= GOAL_Y − CURRICULUM_Y_MARGIN，防 reset 即在门内判 goal 假信号）。"""
+    x = dog_spawn_x + (2.0 * lateral_u - 1.0) * float(lateral_half)
+    y = (dog_spawn_y + dist).clamp(max=float(y_max))
+    return torch.stack([x, y], dim=-1)
+
+
+# ---------------------------------------------------------------------------
 # isaaclab-facing 薄 wrapper（取数 + 调 impl；manager-based term 签名）
 # ---------------------------------------------------------------------------
 
@@ -572,6 +648,77 @@ def _per_env_goal_center(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
     origins = env.scene.env_origins
     return origins[:, :2] + origins.new_tensor(GOAL_CENTER)
+
+
+def reset_ball_root_state(
+    env: ManagerBasedRLEnv,
+    env_ids: torch.Tensor,
+    asset_cfg: Any | None = None,
+) -> None:
+    """球 root state reset（donor env/reset.py:257-280 语义 + [X-HK5] 随机化/课程）。
+
+    default_root_state（= scene.ball init_state 单源 BALL_SPAWN_XY，manager
+    -based 姿态零旋转、速度零）+ env_origins 偏移 → write_root_pose_to_sim /
+    write_root_velocity_to_sim → reset（同步内部 buffer）。
+
+    [X-HK5] spawn 随机化（owner 指令 2026-10-10）：``kick_randomization.
+    enabled``（缺省 True）时球出生位**整体覆写**为狗 spawn（DOG_SPAWN_XY）
+    前方沿 +y 的采样位：
+      - dist ~ U[d_min, d_max(t)]——距离轴随机化本身就是课程；d_max(t) 由
+        :func:`ball_spawn_d_max` 调度（curriculum_enabled=False 时恒
+        d_max_final 满域）；``ball_dist_override`` 非 None 时 dist 轴取覆写
+        常量（eval-only 球距响应扫描口，跳过采样）；
+      - 横向 x ~ dog_x ± ball_xy_range[0]（缺省 ±0.3，design §3.1 档；
+        ball_xy_range 的 y 通道在本机制下不消费——y 轴由 dist 承载）；
+      - y clamp ≤ GOAL_Y − CURRICULUM_Y_MARGIN（防 reset 即在门内假 goal）。
+    enabled=False 且无 override → 完全固定 spawn（init_state 常量面，旧
+    饱和布局逃逸口）。狗位姿不在此事件消费（DOG_SPAWN_XY 固定 spawn 由
+    init_state + reset_base pose_range 钳零承载）。
+
+    asset_cfg 形参：isaaclab 面 cfg 传 SceneEntityCfg("ball")（.name 消费）；
+    缺省 None → "ball" 直用（本模块离线可 import 纪律——模块级不拉
+    isaaclab.managers，与 quat 原语守卫式 import 同款考虑）。
+
+    ball_progress_dense 的 prev_y 缓存由 wrapper 侧"每集首步重播种"
+    （episode_length_buf==1 → prev 取 cur，差分记 0）对 reset 跳变免疫，
+    随机 spawn 下正是其发挥作用的面（[X-HK4] 口径沿用），无需 reset 钩子。
+    """
+    asset_name = getattr(asset_cfg, "name", None) or "ball"
+    ball = env.scene[asset_name]
+    # 默认 root state（pos+quat+vel，init_state 单源）+ env origin 偏移
+    root_state = ball.data.default_root_state.torch.clone()[env_ids]
+    origins = env.scene.env_origins[env_ids]
+    root_state[:, :3] += origins
+    # [X-HK5] 随机化 + 课程（override 为 eval-only 球距覆写口，独立于 enabled）
+    kr = getattr(env.cfg, "kick_randomization", None)
+    if kr is not None and (getattr(kr, "enabled", False)
+                           or getattr(kr, "ball_dist_override", None) is not None):
+        n = int(len(env_ids))
+        dev = root_state.device
+        if kr.ball_dist_override is not None:
+            dist = torch.full((n,), float(kr.ball_dist_override), device=dev)
+        else:
+            if getattr(kr, "curriculum_enabled", False):
+                warmup_steps = float(kr.warmup_iters) * float(kr.steps_per_iter)
+                d_max = ball_spawn_d_max(
+                    float(getattr(env, "common_step_counter", 0)), warmup_steps,
+                    d_max_final=float(kr.d_max_final))
+            else:
+                d_max = float(kr.d_max_final)
+            dist = ball_spawn_dist(torch.rand(n, device=dev),
+                                   float(kr.d_min), d_max)
+        xy = ball_spawn_xy(
+            torch.rand(n, device=dev), dist,
+            lateral_half=float(kr.ball_xy_range[0]),
+            dog_spawn_x=float(DOG_SPAWN_XY[0]),
+            dog_spawn_y=float(DOG_SPAWN_XY[1]),
+            y_max=float(GOAL_Y - CURRICULUM_Y_MARGIN))
+        root_state[:, 0] = origins[:, 0] + xy[:, 0]
+        root_state[:, 1] = origins[:, 1] + xy[:, 1]
+    # 写 sim（donor reset.py:279-280 同款 manager-based 写法）+ 同步内部 buffer
+    ball.write_root_pose_to_sim(root_state[:, :7], env_ids)
+    ball.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
+    ball.reset(env_ids=env_ids)
 
 
 def ball_rel_b(env: ManagerBasedRLEnv) -> torch.Tensor:
@@ -886,6 +1033,9 @@ __all__ = [
     "GOAL_Y",
     "GOAL_HALF_WIDTH",
     "GOAL_CENTER",
+    "DOG_SPAWN_XY",
+    "CURRICULUM_D_MAX_START",
+    "CURRICULUM_Y_MARGIN",
     "BALL_OUT_RADIUS",
     "KICK_OBS_DIM",
     "BALL_RADIUS",
@@ -916,4 +1066,9 @@ __all__ = [
     "ball_progress_dense",
     "kick_event_reward",
     "ball_out_of_bounds_penalty",
+    # [X-HK5] spawn 随机化 + 距离轴课程（reset 事件 func + 纯函数调度面）
+    "reset_ball_root_state",
+    "ball_spawn_d_max",
+    "ball_spawn_dist",
+    "ball_spawn_xy",
 ]

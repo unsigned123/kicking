@@ -551,6 +551,204 @@ def test_ball_progress_dense_wrapper_cache_lifecycle():
 
 
 # --------------------------------------------------------------------------- #
+# 1d. [X-HK5] spawn 随机化 + 距离轴课程（owner 指令 2026-10-10）
+# --------------------------------------------------------------------------- #
+
+_XHK5_KR_FIELDS = dict(
+    enabled=True, ball_xy_range=(0.3, 0.0), dog_yaw_range=(-math.pi, math.pi),
+    curriculum_enabled=True, warmup_iters=500, steps_per_iter=24.0,
+    d_min=0.1, d_max_final=2.7, ball_dist_override=None)
+
+
+def _xhk5_kr(**over):
+    """KickRandomizationCfg 字段面 stub（cfg 数据类离线不可 import → 同名字段
+    SimpleNamespace；_XHK5_KR_FIELDS = 缺省镜像）。"""
+    return types.SimpleNamespace(**{**_XHK5_KR_FIELDS, **over})
+
+
+def test_ball_spawn_d_max_schedule_pure_logic():
+    """d_max 课程调度（规格公式）：t=0 → 0.5 起点；t=warmup → 2.7 满域；
+    线性中点 + clamp 双侧 + 单调性 + 参数化。"""
+    warmup = 500 * 24.0  # 500it × 24 步/it（本栈实测口径）
+    assert ball_mdp.ball_spawn_d_max(0.0, warmup) == 0.5
+    assert abs(ball_mdp.ball_spawn_d_max(warmup, warmup) - 2.7) < 1e-12
+    assert abs(ball_mdp.ball_spawn_d_max(warmup * 2, warmup) - 2.7) < 1e-12  # clamp 上界
+    assert ball_mdp.ball_spawn_d_max(-1.0, warmup) == 0.5  # clamp 下界
+    # 线性中点：frac 0.5 → 0.5 + 1.1 = 1.6
+    assert abs(ball_mdp.ball_spawn_d_max(warmup * 0.5, warmup) - 1.6) < 1e-12
+    # 500it 处恰满域（规格意图）；2000it 处恒满域
+    assert abs(ball_mdp.ball_spawn_d_max(500 * 24.0, 500 * 24.0) - 2.7) < 1e-12
+    # 单调不减（整条调度网格）
+    vals = [ball_mdp.ball_spawn_d_max(t, warmup) for t in range(0, int(warmup) + 1, 997)]
+    assert all(b >= a for a, b in zip(vals, vals[1:]))
+    # 参数化（d_max_start/final 可调面）
+    assert abs(ball_mdp.ball_spawn_d_max(0.0, 100.0, d_max_start=0.2, d_max_final=1.0) - 0.2) < 1e-12
+    assert abs(ball_mdp.ball_spawn_d_max(100.0, 100.0, d_max_start=0.2, d_max_final=1.0) - 1.0) < 1e-12
+
+
+def test_ball_spawn_dist_and_xy_impl_geometry():
+    """dist 采样域 + xy 几何：横向 ±half、y = dog_y + dist clamp ≤ y_max、
+    狗 spawn 偏移承载、误配置防呆。"""
+    torch.manual_seed(7)
+    n = 4096
+    dist = ball_mdp.ball_spawn_dist(torch.rand(n), d_min=0.1, d_max=0.5)
+    assert float(dist.min()) >= 0.1 - 1e-7 and float(dist.max()) < 0.5
+    assert abs(float(dist.mean()) - 0.3) < 0.02  # 均匀均值
+    # 误配置防呆：d_max < d_min → 常量 d_min
+    got = ball_mdp.ball_spawn_dist(torch.rand(8), d_min=0.5, d_max=0.1)
+    assert torch.allclose(got, torch.full((8,), 0.5))
+    # xy：横向 U(±0.3) 围 dog_spawn_x；y = dog_y + dist，clamp ≤ y_max
+    xy = ball_mdp.ball_spawn_xy(torch.rand(n), dist, lateral_half=0.3,
+                                dog_spawn_x=0.0, dog_spawn_y=0.0, y_max=2.8)
+    assert xy.shape == (n, 2)
+    assert float(xy[:, 0].abs().max()) <= 0.3 + 1e-7
+    assert torch.allclose(xy[:, 1], dist.clamp(max=2.8))  # 无 clamp 时 y ≡ dist
+    # y clamp：dist 超 y_max → 截到 2.8（防 reset 即在门内）
+    far = ball_mdp.ball_spawn_xy(torch.rand(4), torch.tensor([3.0, 5.0, 2.79, 2.8]),
+                                 0.3, 0.0, 0.0, 2.8)
+    assert torch.allclose(far[:, 1], torch.tensor([2.8, 2.8, 2.79, 2.8]))
+    # 狗 spawn 偏移承载（dog_xy ≠ 0 的可移植面；lateral_u=0.5 → 零横向）
+    xy2 = ball_mdp.ball_spawn_xy(torch.full((1,), 0.5), torch.tensor([1.0]), 0.3,
+                                 2.0, -1.0, 5.0)
+    assert abs(float(xy2[0, 0]) - 2.0) < 1e-7 and abs(float(xy2[0, 1]) - 0.0) < 1e-7
+
+
+class _Proxy:
+    """[isaaclab 3.0 迁移] 数据面镜像（.torch 取 torch 视图；测试桩零拷贝）。"""
+
+    def __init__(self, t: torch.Tensor):
+        self._t = t
+
+    @property
+    def torch(self) -> torch.Tensor:
+        return self._t
+
+
+def _fake_ball_for_reset(n: int, z: float = 0.11):
+    """reset_ball_root_state 取数/写桩：default_root_state [N,13]（= init_state
+    底板 BALL_SPAWN_XY=(0, GOAL_Y−0.2) 镜像：y=2.8、z=0.11、quat w 单位元）
+    + write/reset 捕获面。"""
+    root = torch.zeros(n, 13)
+    root[:, 1] = 2.8
+    root[:, 2] = z
+    root[:, 6] = 1.0
+    captured = {}
+
+    def write_pose(pose, ids):
+        captured["pose"] = pose.clone()
+
+    def write_vel(vel, ids):
+        captured["vel"] = vel.clone()
+
+    def reset(env_ids=None):
+        captured["reset_ids"] = env_ids
+
+    ball = types.SimpleNamespace(
+        data=types.SimpleNamespace(default_root_state=_Proxy(root)),
+        write_root_pose_to_sim=write_pose,
+        write_root_velocity_to_sim=write_vel,
+        reset=reset)
+    return ball, captured
+
+
+def _fake_env_for_reset(ball, kr, env_origins: torch.Tensor,
+                        common_step_counter: int = 0):
+    scene = _FakeScene({"ball": ball})
+    scene.env_origins = env_origins
+    return types.SimpleNamespace(
+        scene=scene,
+        cfg=types.SimpleNamespace(kick_randomization=kr),
+        common_step_counter=common_step_counter)
+
+
+def test_reset_ball_root_state_curriculum_pipeline():
+    """[X-HK5] reset 事件管道：课程阶段 bounds + 满域扩张 + origin 帧 +
+    z/quat/速度保持 + clamp + override 逃逸口 + disabled 固定 spawn。"""
+    torch.manual_seed(11)
+    n = 2048
+    env_ids = torch.arange(n)
+    # 网格 origins 两行（x/y 偏移逐 env 承载）
+    origins = torch.zeros(n, 3)
+    origins[::2, 0] = 10.0
+    origins[1::2, 1] = -5.0
+
+    def run(kr, counter):
+        ball, cap = _fake_ball_for_reset(n)
+        env = _fake_env_for_reset(ball, kr, origins, common_step_counter=counter)
+        ball_mdp.reset_ball_root_state(env, env_ids)
+        assert cap["reset_ids"] is env_ids
+        return cap["pose"], cap["vel"]
+
+    # ① 课程起点（counter=0 → d_max=0.5）：y ∈ [0.1, 0.5]、x ∈ ±0.3、
+    #    z=0.11 保持、quat 单位元保持、速度零保持、origin 帧正确
+    pose, vel = run(_xhk5_kr(), 0)
+    y_rel = pose[:, 1] - origins[:, 1]
+    x_rel = pose[:, 0] - origins[:, 0]
+    assert float(y_rel.min()) >= 0.1 - 1e-6 and float(y_rel.max()) < 0.5
+    assert float(x_rel.abs().max()) <= 0.3 + 1e-6
+    assert torch.allclose(pose[:, 2], torch.full((n,), 0.11))
+    assert torch.allclose(pose[:, 6], torch.ones(n))
+    assert torch.allclose(vel, torch.zeros(n, 6))
+    # ② 课程满域（counter=warmup 500it×24）：y 张到 2.7、横向不变
+    pose_full, _ = run(_xhk5_kr(), 500 * 24)
+    y_full = pose_full[:, 1] - origins[:, 1]
+    assert float(y_full.min()) >= 0.1 - 1e-6
+    assert float(y_full.max()) <= 2.7 + 1e-6 and float(y_full.max()) > 2.3  # 采样到达远档
+    # ③ 课程中点（counter=6000 = warmup/2 → d_max=1.6）：y ≤ 1.6
+    y_mid = run(_xhk5_kr(), 6000)[0][:, 1] - origins[:, 1]
+    assert float(y_mid.max()) <= 1.6 + 1e-6
+    # ④ y clamp：curriculum_enabled=False + d_max_final 超 y_max → 截 2.8
+    y_nc = run(_xhk5_kr(curriculum_enabled=False, d_max_final=5.0), 0)[0][:, 1] - origins[:, 1]
+    assert float(y_nc.max()) <= 2.8 + 1e-9 and float(y_nc.max()) > 2.7
+    # ⑤ override（eval-only 球距）：y ≡ override（逐 env origin 偏移），横向仍采样
+    pose_ov, _ = run(_xhk5_kr(ball_dist_override=1.0), 12345)
+    assert torch.allclose(pose_ov[:, 1] - origins[:, 1], torch.full((n,), 1.0))
+    assert float((pose_ov[:, 0] - origins[:, 0]).abs().max()) <= 0.3 + 1e-6
+    # override + clamp（2.7 档合法、3.5 档截 2.8）
+    assert torch.allclose(run(_xhk5_kr(ball_dist_override=2.7), 0)[0][:, 1] - origins[:, 1],
+                          torch.full((n,), 2.7))
+    assert torch.allclose(run(_xhk5_kr(ball_dist_override=3.5), 0)[0][:, 1] - origins[:, 1],
+                          torch.full((n,), 2.8))
+    # ⑥ disabled + 无 override：固定 spawn（init_state 底板 (0, 2.8) 原样）
+    pose_fix, _ = run(_xhk5_kr(enabled=False), 777)
+    assert torch.allclose(pose_fix[:, 0], origins[:, 0] + 0.0)
+    assert torch.allclose(pose_fix[:, 1], origins[:, 1] + 2.8)
+
+
+def test_ball_progress_dense_wrapper_random_spawn_reseed():
+    """[X-HK5] 随机 spawn 下 progress 重播种（owner 点名单测变体）：残留缓存
+    **低于**新采 spawn y（旧面会白给正向假 progress 的退化面）→ 每集首步
+    假信号必须 = 0；次步起正常差分。"""
+    # 狗 (0,0)、球随机采到 (0.1, 0.45)（课程起点域内的真实采样形态）
+    base = torch.tensor([[0.0, 0.0, 0.2], [0.0, 0.0, 0.2]])
+    quat = _YAW_QP90.expand(2, 4).contiguous()
+    ball = torch.tensor([[0.1, 0.45, 0.11], [0.1, 0.45, 0.11]])
+    env = _fake_env(base, quat, ball)
+    # 上集终点球停 y=0.2（低于新 spawn 0.45）：裸差分 Δy=+0.25×5=1.25 正向
+    # 假信号（可被策略刷分的退化洞）→ 首步重播种必须记 0
+    setattr(env, "_kick_prev_ball_y", torch.full((2,), 0.2))
+    env.episode_length_buf = torch.tensor([1, 1])
+    rew0 = ball_mdp.ball_progress_dense(env)
+    assert torch.allclose(rew0, torch.zeros(2))
+    assert torch.allclose(getattr(env, "_kick_prev_ball_y"), torch.full((2,), 0.45))
+    # 次步（episode_length_buf=2）：球进 +0.2 → 正常差分 1.0
+    ball[:, 1] = 0.65
+    env.episode_length_buf = torch.tensor([2, 2])
+    rew1 = ball_mdp.ball_progress_dense(env)
+    assert torch.allclose(rew1, torch.full((2,), 1.0))
+    # 混合批：env0 重播种（首步）/ env1 正常步——逐 env 独立
+    ball[:, 1] = torch.tensor([0.9, 0.7])
+    env.episode_length_buf = torch.tensor([1, 3])
+    rew2 = ball_mdp.ball_progress_dense(env)
+    assert torch.allclose(rew2, torch.tensor([0.0, 0.25]))  # env0 重播种记 0；env1 Δy=+0.05×5
+    # 反向 spawn（新 y 低于缓存）：clamp 已归零，重播种不引入新行为
+    ball[:, 1] = 0.3
+    env.episode_length_buf = torch.tensor([4, 4])
+    rew3 = ball_mdp.ball_progress_dense(env)
+    assert torch.allclose(rew3, torch.zeros(2))
+
+
+# --------------------------------------------------------------------------- #
 # 1b. X-HK2 kick_event 奖励（自建过程引导项；检测面单源 kick_metrics）
 # --------------------------------------------------------------------------- #
 
@@ -745,7 +943,11 @@ def test_ball_mdp_exports_and_offline_rotation_fallback():
                  "behind_ball_reward", "ball_progress_dense",
                  "kick_event_reward",
                  "ball_out_of_bounds_penalty",
-                 "robot_fallen", "robot_out_of_field", "wall_stuck"):
+                 "robot_fallen", "robot_out_of_field", "wall_stuck",
+                 "reset_ball_root_state", "ball_spawn_d_max",
+                 "ball_spawn_dist", "ball_spawn_xy",
+                 "DOG_SPAWN_XY", "CURRICULUM_D_MAX_START",
+                 "CURRICULUM_Y_MARGIN"):
         assert name in ball_mdp.__all__, name
     assert "ball_progress_shaping" not in ball_mdp.__all__
     assert "reset_ball_progress_shaping_cache" not in ball_mdp.__all__
@@ -808,11 +1010,15 @@ def test_ball_env_cfg_ball_scene_values():
     assert "mass=0.43" in src
     assert "collision_enabled=True" in src
     assert "activate_contact_sensors=True" in src
-    # [X-HK4 H 臂] 冷启动饱和 spawn 常量面（owner 指令）：球门线前 0.2m、
-    # 狗门线前 0.3m + yaw=π/2（init_state 单源；xyzw 通道序）
+    # [X-HK5] spawn 常量面（owner 指令 2026-10-10）：狗 spawn 原点 (0,0)
+    # 常量单源 = mdp.DOG_SPAWN_XY（ball_mdp 内定义，cfg 经 mdp.* 消费）；
+    # 球 init_state = 固定 spawn 逃逸口 BALL_SPAWN_XY=(0, GOAL_Y−0.2)；yaw=π/2
     assert "pos=(BALL_SPAWN_XY[0], BALL_SPAWN_XY[1], 0.11)" in src
-    assert "DOG_SPAWN_XY = (0.0, mdp.GOAL_Y - 0.3)" in src
     assert "BALL_SPAWN_XY = (0.0, mdp.GOAL_Y - 0.2)" in src
+    with open(_BALL_MDP_PATH, encoding="utf-8") as f:
+        mdp_src_spawn = f.read()
+    assert "DOG_SPAWN_XY = (0.0, 0.0)" in mdp_src_spawn
+    assert "_dog_init.pos = (mdp.DOG_SPAWN_XY[0], mdp.DOG_SPAWN_XY[1]," in src
     assert "math.sin(0.25 * math.pi), math.cos(0.25 * math.pi)" in src  # yaw=π/2 xyzw
     assert "_dog_init.rot = DOG_SPAWN_YAW_QUAT_XYZW" in src
     # headless 材质死旋防护（A100 实测；flat_env_cfg.py 头 U6 同型）：
@@ -949,12 +1155,26 @@ def test_ball_env_cfg_kick_policy_and_commands():
     assert "func=mdp.generated_commands" not in src
 
 
-def test_ball_env_cfg_kick_randomization_disabled_by_default():
-    """随机化接口存在但默认完全关闭（owner 拍板 #3）+ 固定 spawn。"""
+def test_ball_env_cfg_kick_randomization_curriculum_by_default():
+    """[X-HK5] 随机化 + 距离轴课程缺省启用（owner 指令 2026-10-10）+ 狗固定
+    spawn 零采样 + eval-only 覆写口字段在位。"""
     src = _kick_cfg_src()
     assert "self.kick_randomization = KickRandomizationCfg()" in src
-    assert "enabled: bool = False" in src
-    assert "ball_xy_range" in src and "dog_yaw_range" in src
+    assert "enabled: bool = True" in src
+    assert "ball_xy_range: tuple[float, float] = (0.3, 0.0)" in src
+    assert "dog_yaw_range" in src
+    # 距离轴课程字段化（规格公式单源：0.5 起点常量在 ball_mdp）
+    assert "curriculum_enabled: bool = True" in src
+    assert "warmup_iters: int = 500" in src
+    assert "steps_per_iter: float = 24.0" in src
+    assert "d_min: float = 0.1" in src
+    assert "d_max_final: float = 2.7" in src
+    assert "ball_dist_override: float | None = None" in src
+    # d_max 起点/margin 常量单源在 ball_mdp（0.5 起点 = 旧饱和狗-球距）
+    with open(_BALL_MDP_PATH, encoding="utf-8") as f:
+        mdp_src = f.read()
+    assert "CURRICULUM_D_MAX_START = 0.5" in mdp_src
+    assert "CURRICULUM_Y_MARGIN = 0.2" in mdp_src
     # 狗固定 spawn 原点 yaw0（pose_range 钳零；velocity_range 继承现款零速度）
     assert '"x": (0.0, 0.0)' in src and '"yaw": (0.0, 0.0)' in src
 
@@ -970,17 +1190,23 @@ def test_ball_env_cfg_oracle_face_restores_commands_and_obs():
 
 
 def test_ball_env_cfg_ball_reset_event_wires_ball_write():
-    """球 reset 事件：write pose/velocity → reset，链在位（旧 shaping 缓存
-    清除钩子已随 ball_progress_shaping 移除——防呆见
-    test_shaping_cache_face_removed_guards）。"""
+    """球 reset 事件：func 单源 = mdp.reset_ball_root_state（[X-HK5] 移挂
+    ball_mdp 离线可测面）+ 写入链在位；旧 shaping 缓存清除钩子零残留
+    （防呆见 test_shaping_cache_face_removed_guards）。"""
     src = _kick_cfg_src()
     assert "self.events.reset_ball = EventTerm(" in src
+    assert "func=mdp.reset_ball_root_state," in src
     assert 'mode="reset"' in src
-    assert "write_root_pose_to_sim" in src
-    assert "write_root_velocity_to_sim" in src
-    assert "ball.reset(" in src
-    assert "env_origins" in src  # env origin 偏移（donor reset.py:275 语义）
     assert "reset_ball_progress_shaping_cache" not in src  # 旧钩子零残留
+    with open(_BALL_MDP_PATH, encoding="utf-8") as f:
+        mdp_src = f.read()
+    assert "def reset_ball_root_state(" in mdp_src
+    assert "write_root_pose_to_sim" in mdp_src
+    assert "write_root_velocity_to_sim" in mdp_src
+    assert "ball.reset(" in mdp_src
+    assert "env_origins" in mdp_src  # env origin 偏移（donor reset.py:275 语义）
+    assert "ball_spawn_d_max" in mdp_src and "ball_spawn_dist" in mdp_src \
+        and "ball_spawn_xy" in mdp_src
 
 
 # --------------------------------------------------------------------------- #

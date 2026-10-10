@@ -31,11 +31,14 @@
 # KICK 适配表（对 flat 链的全部 override，逐处标注）：
 #   K1) scene：+ 球 RigidObjectCfg（scene.ball）+ 球侧 ContactSensor
 #       （scene.ball_contact_forces）；terrain/光照/height_scanner=None 沿用继承链。
-#   K2) events：+ reset_ball（球 root state 写入）；reset_base 的 pose_range
-#       钳零 —— 狗固定 spawn 零采样语义（owner 拍板 #3，保留 velocity_range=
-#       (0,0) 与 stand 姿态的现款零速度语义）；spawn 位姿常量面 [X-HK4 H 臂]
-#       = DOG_SPAWN_XY + yaw=π/2（init_state 单源，rc1 default⊗delta 语义下
-#       reset 后稳定存活）。
+#   K2) events：+ reset_ball（球 root state 写入；[X-HK5] func 移挂
+#       mdp.reset_ball_root_state——随机化/课程采样逻辑移入 ball_mdp 离线
+#       可测面）；reset_base 的 pose_range 钳零 —— 狗固定 spawn 零采样语义
+#       （owner 拍板 #3，保留 velocity_range=(0,0) 与 stand 姿态的现款零
+#       速度语义）；spawn 位姿常量面 [X-HK5]：狗 = mdp.DOG_SPAWN_XY=(0,0)
+#       （原点、进攻轴 +y）+ yaw=π/2（init_state 单源，rc1 default⊗delta
+#       语义下 reset 后稳定存活；owner 指令 2026-10-10——旧值门线前 0.3m
+#       为 [X-HK4 H 臂] 饱和布局，随 J 臂全任务域化移除）。
 #   K3) observations.policy → KickPolicyCfg（55 维 = 42-prefix 契约逐参不动
 #       ⊕ base_lin_vel 3 ⊕ ball_rel_b 3 ⊕ goal_rel_b 4 ⊕ push_geometry_b 3）。
 #   K4) commands.base_velocity = None（任务无 cmd 面）。
@@ -57,9 +60,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-import torch
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -90,18 +91,16 @@ from hierarchical_kick.sim.mdp.frozen_loco_action import (
     low_level_last_action_obs,
 )
 
-if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedRLEnv
-
 ##
-# [X-HK4 H 臂] 冷启动饱和 spawn 常量面（owner 指令 2026-10-09：狗出生在球门
-# 前 0.3m、球 spawn 离狗 0.1m——"球在脚边+门在鼻尖"整条奖励闭环全速验证）
+# [X-HK4 H 臂 → X-HK5 J 臂] spawn 常量面
+#
+# [X-HK5]（owner 指令 2026-10-10）：狗 spawn 原点 (0,0)、yaw=π/2 固定
+# （常量单源 = mdp.DOG_SPAWN_XY）；球出生随机化 + 距离轴课程（dist ~
+# U[d_min, d_max(t)]，见 KickRandomizationCfg / mdp.ball_spawn_* 单源）。
+# 本文件仅存 enabled=False 固定 spawn 逃逸口的 init_state 常量（旧 H 臂
+# 饱和布局：球门线前 0.2m）。
 ##
 
-
-DOG_SPAWN_XY = (0.0, mdp.GOAL_Y - 0.3)
-"""狗 spawn（env 系 xy）：门线前 0.3m（GOAL_Y=3.0 → y=2.7）；站球后，
-behind_ball 位形天然正确。"""
 
 DOG_SPAWN_YAW_QUAT_XYZW = (0.0, 0.0, math.sin(0.25 * math.pi), math.cos(0.25 * math.pi))
 """狗 spawn 朝向四元数（**xyzw**，isaaclab 3.0 通道序）：yaw=π/2 面朝球门
@@ -110,11 +109,14 @@ delta、本链 reset_base pose_range 钳零（delta=identity）→ 本 quat 每�
 reset 后逐位回到。"""
 
 BALL_SPAWN_XY = (0.0, mdp.GOAL_Y - 0.2)
-"""球 spawn（env 系 xy）：狗前 0.1m、距门线 0.2m（GOAL_Y=3.0 → y=2.8）。"""
+"""球固定 spawn（env 系 xy；kick_randomization.enabled=False 逃逸口）：
+门线前 0.2m（GOAL_Y=3.0 → y=2.8）。[X-HK4 H 臂] 饱和布局原值——J 臂起
+缺省走随机化 + 课程（enabled=True），本常量仅供 A/B 与调试面。"""
 
 
 ##
-# 随机化接口（纯 python，不依赖 isaaclab；owner 拍板 #3：只留接口不启用）
+# 随机化 + 距离轴课程 cfg（[X-HK5]；纯 python 数据类，不依赖 isaaclab——
+# 采样/调度逻辑单源在 mdp.ball_spawn_* / mdp.reset_ball_root_state）
 ##
 
 
@@ -174,61 +176,48 @@ class KickRewardWeightsCfg:
 
 @dataclass
 class KickRandomizationCfg:
-    """kick 面 spawn 随机化接口（默认完全关闭 → 固定 spawn）。
+    """kick 面 spawn 随机化 + 距离轴课程（[X-HK5] owner 指令 2026-10-10）。
 
-    enabled=False（默认）：球固定 spawn BALL_SPAWN_XY=(0, GOAL_Y−0.2, 0.11)
-    （scene init_state 单源——[X-HK4 H 臂] 门线前 0.2m 冷启动饱和课程，旧值
-    (0.3, 0, 0.11) G 臂贴脚）、狗固定 spawn DOG_SPAWN_XY + yaw=π/2（
-    init_state 单源；reset_base pose_range 钳零保持零采样语义）——owner
-    指令 2026-10-09。
-    enabled=True：reset_ball 事件在默认 spawn 附近做均匀采样：
-      - ball_xy_range：球横向偏移半幅 (x, y)（design §3.1 ±0.3 档）；
-      - dog_yaw_range：狗 yaw 采样幅（预留字段——pilot 期接线 reset_base
-        pose_range 的 yaw 通道后再消费；当前实现不驱动狗位姿）。
+    enabled=True（**缺省，J 臂起**）：reset_ball 事件（mdp.
+    reset_ball_root_state 单源）把球出生位整体覆写为狗 spawn 前方采样位：
+      - dist ~ U[d_min, d_max(t)]：距离轴随机化本身就是课程——d_max(t) =
+        0.5 + (d_max_final−0.5)×clamp(common_step_counter/warmup_steps, 0, 1)
+        （mdp.ball_spawn_d_max 单源；warmup_steps = warmup_iters ×
+        steps_per_iter）。steps_per_iter 口径 = 本栈实测 24 步/it
+        （common_step_counter 每 env.step +1、rollout num_steps_per_env=24）
+        → warmup_iters=500 处恰满域（规格"500it 处到满域"；规格文字
+        "250 步/it" 为口径笔误，实测见 manager_based_rl_env.py:249）；
+      - 横向 x ~ U(±ball_xy_range[0])（缺省 ±0.3，design §3.1 档；y 通道
+        不消费——y 轴由 dist 承载）；
+      - y clamp ≤ GOAL_Y − 0.2（mdp.CURRICULUM_Y_MARGIN，防 reset 即在
+        门内假 goal）。
+    curriculum_enabled=False：跳过调度，dist ~ U[d_min, d_max_final] 恒满域。
+    ball_dist_override：eval-only 球距覆写（eval_kick.py --ball_dist 单一口），
+    非 None 时 dist 轴取常量、跳过采样（横向仍采样）——球距响应扫描用。
+    enabled=False 且无 override：完全固定 spawn BALL_SPAWN_XY（init_state
+    单源；旧 H 臂饱和布局逃逸口）。狗恒固定 spawn mdp.DOG_SPAWN_XY +
+    yaw=π/2（不随机；init_state 单源 + reset_base pose_range 钳零）。
+    dog_yaw_range：预留字段（pilot 期接线后再消费；当前实现不驱动狗位姿）。
     """
 
-    enabled: bool = False
-    ball_xy_range: tuple[float, float] = (0.0, 0.3)
+    enabled: bool = True
+    ball_xy_range: tuple[float, float] = (0.3, 0.0)
     dog_yaw_range: tuple[float, float] = (-math.pi, math.pi)
+    # [X-HK5] 距离轴课程（规格公式字段化）
+    curriculum_enabled: bool = True
+    warmup_iters: int = 500
+    steps_per_iter: float = 24.0
+    d_min: float = 0.1
+    d_max_final: float = 2.7
+    # [X-HK5] eval-only 球距覆写（None = 不覆写；eval_kick.py --ball_dist）
+    ball_dist_override: float | None = None
 
 
 ##
-# reset 事件（isaaclab 面；供 EventTerm 挂载）
+# reset 事件（isaaclab 面）：reset_ball func 单源 = mdp.reset_ball_root_state
+# （[X-HK5] 移入 ball_mdp——随机化/课程采样逻辑离线可测；挂载见
+# Go2KickFlatEnvCfg.__post_init__ 的 events.reset_ball）
 ##
-
-
-def reset_ball_root_state(
-    env: 'ManagerBasedRLEnv',
-    env_ids: torch.Tensor,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("ball"),
-) -> None:
-    """球 root state reset：写 pose/velocity 进 sim 后 reset。
-
-    donor reset.py:257-280 语义：default_root_state（= scene.ball init_state
-    单源 BALL_SPAWN_XY=(0, GOAL_Y−0.2, 0.11)——[X-HK4 H 臂] 门线前 0.2m 冷
-    启动饱和课程，manager-based 姿态零旋转、速度零）+ env_origins 偏移
-    → write_root_pose_to_sim / write_root_velocity_to_sim → reset（同步内部
-    buffer）。kick_randomization.enabled=True 时叠加横向均匀采样（owner 拍板
-    #3：接口在位、默认关闭）。（旧 ball_progress_shaping 的清缓存钩子已随
-    该项移除——ball_progress_dense 的 prev_y 缓存由 wrapper 侧"每集首步
-    重播种"（episode_length_buf==1 → prev 取 cur，差分记 0）对 reset 跳变
-    免疫，无需 reset 钩子，见 ball_mdp.ball_progress_dense 口径。）
-    """
-    ball = env.scene[asset_cfg.name]
-    # 默认 root state（pos+quat+vel，init_state 单源）+ env origin 偏移
-    root_state = ball.data.default_root_state.torch.clone()[env_ids]
-    root_state[:, :3] += env.scene.env_origins[env_ids]
-    # 随机化接口（owner 拍板 #3：默认 enabled=False → 完全固定 spawn）
-    kr = env.cfg.kick_randomization
-    if kr.enabled:
-        rand = torch.rand(len(env_ids), 2, device=root_state.device)
-        half = ball.data.root_pos_w.torch.new_tensor(kr.ball_xy_range)
-        root_state[:, 0] += (rand[:, 0] * 2.0 - 1.0) * half[0]
-        root_state[:, 1] += (rand[:, 1] * 2.0 - 1.0) * half[1]
-    # 写 sim（donor reset.py:279-280 同款 manager-based 写法）+ 同步内部 buffer
-    ball.write_root_pose_to_sim(root_state[:, :7], env_ids)
-    ball.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
-    ball.reset(env_ids=env_ids)
 
 
 ##
@@ -308,8 +297,9 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
 
         # [K1] 球场景（donor scene.py:215-247 逐值照抄 + provenance 行内注；
         #      init_state pos = 固定 spawn BALL_SPAWN_XY=(0, GOAL_Y−0.2, 0.11)
-        #      ——[X-HK4 H 臂] 门线前 0.2m 冷启动饱和课程，旧值 (0.3, 0, 0.11)
-        #      为 X-HK3 G 臂贴脚）
+        #      ——[X-HK5] 起 enabled=True 缺省走随机化 + 课程，此 init_state
+        #      仅是 enabled=False 逃逸口的常量面（旧值 (0.3, 0, 0.11) 为
+        #      X-HK3 G 臂贴脚）
         self.scene.ball = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Ball",
             spawn=sim_utils.SphereCfg(
@@ -341,13 +331,14 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
                 activate_contact_sensors=True,
             ),
             init_state=RigidObjectCfg.InitialStateCfg(
-                # [X-HK4 H 臂] 球 spawn 门线前 0.2m（BALL_SPAWN_XY，owner
-                # 指令"球 spawn 离狗 0.1m"）——dog/球/门三点一线 +y。⚠️ 已知
-                # 前案（X-HK3 G 臂裁定）：0.1m 处球面（r0.11 表面延伸进机体）
-                # 与狗前腿初始穿透、PhysX 解算弹飞——H 臂按 owner 指令故意
-                # 复现该距离直接试效果；若训练首 iter 出现 goal 假信号/球飞，
-                # 优先归因于此（弹飞朝 +y = 瞬间过门线假 goal）。旧值
-                # (0.3, 0, 0.11) 为 G 臂贴脚（X-HK3 修法=鼻端/足端接触线）。
+                # [X-HK5] 球固定 spawn 逃逸口常量面（BALL_SPAWN_XY 门线前
+                # 0.2m，H 臂饱和布局）——缺省 enabled=True 时此值仅作
+                # default_root_state 底板（xy 被 reset_ball 采样整体覆写，
+                # z=0.11 沿用）。⚠️ 已知前案（X-HK3 G 臂裁定）：0.1m 处球面
+                # （r0.11 表面延伸进机体）与狗前腿初始穿透、PhysX 解算弹飞
+                # ——随机化下 dist ∈ [0.1, ·] 仍含贴脚档，若首 iter 出现
+                # goal 假信号/球飞优先归因于此（弹飞朝 +y = 瞬间过门线假
+                # goal；ball_progress 首步重播种对 spawn 跳变免疫）。
                 pos=(BALL_SPAWN_XY[0], BALL_SPAWN_XY[1], 0.11),
                 rot=(0.0, 0.0, 0.0, 1.0),  # 无旋转（xyzw 单位元；isaaclab 3.0 通道序）
             ),
@@ -369,17 +360,21 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
             ],
         )
 
-        # [K2] 随机化接口挂载（owner 拍板 #3：enabled=False 默认完全关闭）
+        # [K2] 随机化 + 距离轴课程挂载（[X-HK5] owner 指令 2026-10-10：
+        #      enabled=True 缺省——球出生狗前方 dist ~ U[d_min, d_max(t)] +
+        #      横向 U(±0.3)，课程调度面 = mdp.ball_spawn_d_max 单源）
         self.kick_randomization = KickRandomizationCfg()
 
-        # [X-HK4 H 臂] 狗 spawn 常量面（owner 指令 2026-10-09）：门线前 0.3m、
-        #      yaw=π/2 面朝球门——站球后，behind_ball 位形天然正确。实现走
-        #      init_state 单源（spawn z 沿用 profile 现款，不硬编码）：rc1
-        #      reset_root_state_uniform = default ⊗ delta、本链 pose_range 钳零
-        #      （delta=identity）→ 每次 reset 后位姿逐位回到本值，yaw 稳定
-        #      存活；下方 reset_base 零采样语义保持（狗固定 spawn）。
+        # [X-HK5] 狗 spawn 常量面（owner 指令 2026-10-10）：原点 (0,0)、
+        #      yaw=π/2 面朝球门（常量单源 = mdp.DOG_SPAWN_XY；旧 [X-HK4 H 臂]
+        #      门线前 0.3m 饱和位随全任务域化移除）。实现走 init_state 单源
+        #      （spawn z 沿用 profile 现款，不硬编码）：rc1
+        #      reset_root_state_uniform = default ⊗ delta、本链 pose_range
+        #      钳零（delta=identity）→ 每次 reset 后位姿逐位回到本值，yaw
+        #      稳定存活；下方 reset_base 零采样语义保持（狗固定 spawn）。
         _dog_init = self.scene.robot.init_state
-        _dog_init.pos = (DOG_SPAWN_XY[0], DOG_SPAWN_XY[1], float(_dog_init.pos[2]))
+        _dog_init.pos = (mdp.DOG_SPAWN_XY[0], mdp.DOG_SPAWN_XY[1],
+                         float(_dog_init.pos[2]))
         _dog_init.rot = DOG_SPAWN_YAW_QUAT_XYZW
 
         # [K2] 狗固定 spawn 零采样（owner 拍板 #3；velocity_range 已由
@@ -389,11 +384,12 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
             "y": (0.0, 0.0),
             "yaw": (0.0, 0.0),
         }
-        # [K2] 球 reset 事件（写入 root state；旧 shaping 清缓存钩子已移除——
-        #      ball_progress_dense 缓存由 wrapper"每集首步重播种"对 reset
-        #      跳变免疫，[X-HK4]）
+        # [K2] 球 reset 事件（写入 root state；[X-HK5] func 单源 =
+        #      mdp.reset_ball_root_state——随机化/课程采样逻辑在 ball_mdp，
+        #      离线可测；ball_progress_dense 缓存由 wrapper"每集首步重播种"
+        #      对 reset 跳变免疫，随机 spawn 下正是其发挥作用的面）
         self.events.reset_ball = EventTerm(
-            func=reset_ball_root_state,
+            func=mdp.reset_ball_root_state,
             mode="reset",
             params={"asset_cfg": SceneEntityCfg("ball")},
         )
@@ -635,5 +631,4 @@ __all__ = [
     "Go2KickFlatEnvCfgOracle",
     "KickPolicyCfgCmd",
     "Go2KickFlatEnvCfgCommand",
-    "reset_ball_root_state",
 ]

@@ -254,6 +254,43 @@ def main() -> None:
           f"max_iterations={agent_cfg.max_iterations}  "
           f"seed={agent_cfg.seed}")
 
+    # [X-HK5] spawn 课程 + 球出生随机化调度核对（纯 cfg 数学，env 构造前；
+    # common_step_counter 口径 = 每 env.step +1（manager_based_rl_env.py:249）
+    # → 实际步/it = num_steps_per_env；steps_per_iter cfg 缺省按此校准）
+    from hierarchical_kick.sim.mdp.ball_mdp import (
+        CURRICULUM_D_MAX_START,
+        CURRICULUM_Y_MARGIN,
+        GOAL_Y,
+        ball_spawn_d_max,
+    )
+    _kr = env_cfg.kick_randomization
+    _warmup_steps = float(_kr.warmup_iters) * float(_kr.steps_per_iter)
+    _spi_actual = max(float(agent_cfg.num_steps_per_env), 1.0)
+    _dmax0 = ball_spawn_d_max(0.0, _warmup_steps, d_max_final=float(_kr.d_max_final))
+    _dmax_end = ball_spawn_d_max(
+        float(agent_cfg.max_iterations) * _spi_actual, _warmup_steps,
+        d_max_final=float(_kr.d_max_final))
+    _it_full_actual = _warmup_steps / _spi_actual
+    print(f"[hkick][X-HK5] spawn 课程面: enabled={_kr.enabled}  "
+          f"curriculum={_kr.curriculum_enabled}  d_min={_kr.d_min}  "
+          f"d_max={CURRICULUM_D_MAX_START}→{_kr.d_max_final}  "
+          f"warmup_iters={_kr.warmup_iters}×steps_per_iter="
+          f"{_kr.steps_per_iter}→warmup_steps={_warmup_steps:.0f}  "
+          f"ball_xy_range={_kr.ball_xy_range}  "
+          f"y_max=GOAL_Y-{CURRICULUM_Y_MARGIN}={GOAL_Y - CURRICULUM_Y_MARGIN:.1f}")
+    print(f"[hkick][X-HK5] d_max 调度: it=0 → {_dmax0:.3f}m  "
+          f"it={agent_cfg.max_iterations} → {_dmax_end:.3f}m"
+          f"(实际日历 {agent_cfg.num_steps_per_env} 步/it)  "
+          f"满域 iter: warmup_iters={_kr.warmup_iters}"
+          f"(nominal {_kr.steps_per_iter} 步/it) / "
+          f"actual≈{_it_full_actual:.0f}")
+    if _kr.curriculum_enabled and abs(_it_full_actual - float(_kr.warmup_iters)) > max(
+            0.05 * float(_kr.warmup_iters), 1.0):
+        print(f"[hkick][X-HK5][WARN] steps_per_iter 缺省口径"
+              f"({_kr.steps_per_iter}) 与实际 rollout({_spi_actual:.0f} 步/it)"
+              f"不一致 → 实际满域在 iter≈{_it_full_actual:.0f}"
+              f"（非 {_kr.warmup_iters}）——核对 warmup 口径")
+
     # 3) env + 关节序断言 -------------------------------------------------- #
     env = gym.make(args_cli.task, cfg=env_cfg)
     env.reset()  # scene spawn 完成（joint_names / group_obs_dim 可读面）
@@ -271,9 +308,9 @@ def main() -> None:
     gdim = {str(k): int(v[-1]) for k, v in
             sim_env.observation_manager.group_obs_dim.items()}
     print("[hkick] runtime group_obs_dim:", gdim)
-    # [X-HK4] 冷启动饱和 spawn 核对（一次性；env.reset 后的 init 位姿/奖励
-    # 流首值——ball_distance 期望 ≈0.2×exp(−0.1/0.5)=0.164、behind 高位、
-    # goal_scored 必须 False（球距门线 0.2m 未过线））
+    # [X-HK4→X-HK5] spawn 核对（一次性；env.reset 后的 init 位姿/奖励流首值
+    # ——[X-HK5] 起球出生随机化，ball_distance/位置为 env0 首采样值，dog
+    # 恒 (0,0) yaw=π/2；goal_scored 必须 False（球 y ≤ GOAL_Y−0.2 未过线））
     from hierarchical_kick.sim.mdp import ball_mdp as _bmdp
     _r0, _b0 = sim_env.scene["robot"], sim_env.scene["ball"]
     _bd_T = float(env_cfg.rewards.ball_distance.params["temperature"])
@@ -281,12 +318,15 @@ def main() -> None:
         _bmdp.ball_distance_reward(sim_env, temperature=_bd_T)[0])
     _bh = float(env_cfg.rewards.behind_ball.weight) * float(
         _bmdp.behind_ball_reward(sim_env)[0])
-    print(f"[hkick][X-HK4] 冷启动 spawn 核对: "
+    _dist0 = float(torch.linalg.vector_norm(
+        _b0.data.root_pos_w.torch[0, :2] - _r0.data.root_pos_w.torch[0, :2]))
+    print(f"[hkick][X-HK5] spawn 首采样核对: "
           f"dog_pos={tuple(round(v, 4) for v in _r0.data.root_pos_w.torch[0, :3].tolist())} "
           f"yaw={float(_bmdp._yaw_from_quat(_r0.data.root_quat_w.torch[0:1])[0]):.4f}(期望≈{math.pi / 2:.4f}) "
           f"ball_pos={tuple(round(v, 4) for v in _b0.data.root_pos_w.torch[0, :3].tolist())} "
+          f"dist0={_dist0:.4f}(d_max={_bmdp.ball_spawn_d_max(float(sim_env.common_step_counter), float(env_cfg.kick_randomization.warmup_iters) * float(env_cfg.kick_randomization.steps_per_iter), d_max_final=float(env_cfg.kick_randomization.d_max_final)):.3f}) "
           f"ball_rel_b[0]={[round(v, 4) for v in _bmdp.ball_rel_b(sim_env)[0].tolist()]} "
-          f"ball_distance[0]={_bd:.4f}(T={_bd_T};dist0.1→0.1637) behind[0]={_bh:.4f} "
+          f"ball_distance[0]={_bd:.4f}(T={_bd_T}) behind[0]={_bh:.4f} "
           f"goal_scored[0]={bool(_bmdp.goal_scored(sim_env)[0])}")
     # obs 维契约：cmd 面恒 kick 55（KICK_POLICY_OBS_DIM，mirror
     # ball_mdp.KICK_OBS_DIM——kick_metrics import 期交叉断言防漂移）

@@ -60,6 +60,12 @@ parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--stochastic", action="store_true", default=False,
                     help="[X-HK2] policy 随机采样口径（训练期 stochastic；"
                          "缺省 deterministic mean。固定 --seed 保证臂间可比）")
+# [X-HK5] eval-only 球距覆写：球出生沿 +y 固定距（跳过距离采样；横向仍按
+# kick_randomization 采样）——球距响应扫描（0.1/0.5/1.0/2.0/2.7m 课程
+# 有效性曲线）单一口。缺省 None = 训练同款随机化分布。
+parser.add_argument("--ball_dist", type=float, default=None,
+                    help="[X-HK5] 球距覆写 m（球出生 = 狗前方沿 +y 恰该距离；"
+                         "缺省 None = 训练同款 dist 采样）")
 parser.add_argument("--out", type=str, default=None,
                     help="结果 json 输出路径（缺省仅 stdout）")
 parser.add_argument("--low_level_convention", type=str,
@@ -144,6 +150,15 @@ def main() -> None:
     env_cfg.actions.joint_pos.low_level_ckpt_path = _low_path
     env_cfg.actions.joint_pos.low_level_convention = \
         str(args_cli.low_level_convention)
+    # [X-HK5] eval-only 球距覆写（reset_ball 采样口 dist 轴取常量）
+    if args_cli.ball_dist is not None:
+        env_cfg.kick_randomization.ball_dist_override = float(args_cli.ball_dist)
+        print(f"[hkick][eval][X-HK5] ball_dist 覆写: "
+              f"{float(args_cli.ball_dist)} m（球出生 = 狗前方沿 +y 恰该距，"
+              "横向仍采样；跳过距离课程采样）")
+    else:
+        print("[hkick][eval][X-HK5] ball_dist 未覆写 → 训练同款随机化分布"
+              "（eval 时段课程计数从 0 起，d_max≈起点 0.5m 域）")
 
     # 2) agent cfg（仅作 runner 构造面；训练超参不消费） ------------------- #
     from hierarchical_kick.agents import UpperKickCmdPPORunnerCfg as _RunnerCfg
@@ -294,6 +309,7 @@ def main() -> None:
             "num_envs": num_envs,
             "seed": int(args_cli.seed),
             "stochastic": stochastic,
+            "ball_dist": args_cli.ball_dist,
             "steps_run": step,
             "episodes_collected": n,
             "low_level_convention": str(args_cli.low_level_convention),
