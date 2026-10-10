@@ -69,6 +69,7 @@ from isaaclab_tasks.core.velocity.velocity_env_cfg import (  # noqa: E501
 )
 import isaaclab_tasks.core.velocity.mdp as velocity_mdp  # noqa: E402
 from isaaclab.managers import RewardTermCfg as RewTerm  # noqa: E402
+from isaaclab.managers import SceneEntityCfg  # noqa: E402
 
 from hierarchical_kick.robots import make_robot_profile
 
@@ -229,6 +230,16 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_air_time.params["threshold"] = 0.2
         self.rewards.survival = RewTerm(
             func=velocity_mdp.is_alive, weight=0.1)
+        # 触地脚滑动罚（round-11）：r9/r10 病灶 = 摆腿但脚蹭地不位移
+        # （探针 |qd|≈4 rad/s 而 v_body≈0）——feet_slide 罚触地脚速度，
+        # 逼摆动相真正抬脚（weight −0.2 = xiaomi 快照值）。
+        self.rewards.feet_slide = RewTerm(
+            func=velocity_mdp.feet_slide, weight=-0.2,
+            params={
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces", body_names=".*_foot"),
+                "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            })
         self.rewards.action_rate_l2.weight = -0.10
         self.rewards.dof_acc_l2.weight = -2.5e-7
         self.events.reset_robot_joints.params["position_range"] = (0.75, 1.25)
