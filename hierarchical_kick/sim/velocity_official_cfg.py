@@ -241,7 +241,9 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
                 "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
             })
         self.rewards.action_rate_l2.weight = -0.10
-        self.rewards.dof_acc_l2.weight = -2.5e-7
+        # dof_acc 权重按本体标定：URDF 链初期关节抖动大，-2.5e-7 会使该项
+        # 罚占奖励质量 ~50%（go2 同权重仅 ~4%）→ 降至同数量级占比（~-0.1/s）
+        self.rewards.dof_acc_l2.weight = -3e-9
         self.events.reset_robot_joints.params["position_range"] = (0.75, 1.25)
         self.events.reset_base.params["pose_range"] = {
             "x": (-0.25, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)}
