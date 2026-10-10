@@ -181,12 +181,10 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         # go2-flat 同款（rough 段置 None；base 的 .*THIGH 名不属 cyberdog2）
         self.rewards.undesired_contacts = None
 
-        # --- 奖励谱系（go2 rough→flat 最终数值复刻） ---------------------
-        self.rewards.track_lin_vel_xy_exp.weight = 1.5
-        self.rewards.track_ang_vel_z_exp.weight = 0.75
+        # --- 奖励谱系（go2 rough→flat 谱系基础值；track 幅值 round-8 由
+        #     xiaomi 快照覆写，见下） -----------------------------------
         self.rewards.feet_air_time.weight = 0.25
         self.rewards.dof_torques_l2.weight = -0.0002
-        self.rewards.dof_acc_l2.weight = -2.5e-7
         self.rewards.flat_orientation_l2.weight = -2.5
 
         # --- 命令 ranges（xiaomi 成功快照本体参数；结构=官方基座） -------
@@ -211,19 +209,20 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         # debug marker 关（headless goal marker 材质死旋防护；训练无关）
         self.commands.base_velocity.debug_vis = False
 
-        # --- 抗塌陷塑形（round-2→4 递进；奖励/reset = 非契约面，obs/动作/
-        #     命令契约不动。round-1/2/3 诊断：官方奖励谱系下 cyberdog2
-        #     （kp25 弱执行器）陷入"高频关节抖动"吸引子（qd ±15-30 rad/s，
-        #     dof_acc ≈ −2.3/step）→ 抖动代价 >> 生存收益 ⇒ PPO 学会速死
-        #     （ep-len 12-21、reward −1.7 ~ −3）。round-4 对策 = 让"活着"
-        #     严格占优"死亡"：survival 1.0（站桩 +1.0/step，抖动存活
-        #     +0.3/step，死亡 ≈0）+ dof_acc 软化 −1e-7（仍罚振动，但不再
-        #     罚得让死亡更优）；tracking 梯度随后接管。reset 温和化（xiaomi
-        #     快照口径）保留。 --------------------------------------------
+        # --- 抗塌陷塑形（round-2→8 递进；奖励/reset = 非契约面，obs/动作/
+        #     命令契约不动。round-7 曲线：存活盆地已可达（ep-len 涨至
+        #     232）但策略栖身 −1.4/step 抖动/弹跳均衡后仍滑回速死——缺
+        #     tracking 梯度量级。round-8 采纳 xiaomi 成功快照奖励量级
+        #     （track 15/8 = 官方 10 倍 ⇒ 跟踪梯度碾压生存均衡，协调步态
+        #     成唯一高回报解）：track_lin 15.0/track_ang 8.0、survival
+        #     0.1、dof_acc −2.5e-7（均 = xiaomi 快照值）；action_rate
+        #     −0.10/reset 温和化（joint 0.75-1.25、pose ±0.25）保留。 ---
+        self.rewards.track_lin_vel_xy_exp.weight = 15.0
+        self.rewards.track_ang_vel_z_exp.weight = 8.0
         self.rewards.survival = RewTerm(
-            func=velocity_mdp.is_alive, weight=1.0)
+            func=velocity_mdp.is_alive, weight=0.1)
         self.rewards.action_rate_l2.weight = -0.10
-        self.rewards.dof_acc_l2.weight = -1.0e-7
+        self.rewards.dof_acc_l2.weight = -2.5e-7
         self.events.reset_robot_joints.params["position_range"] = (0.75, 1.25)
         self.events.reset_base.params["pose_range"] = {
             "x": (-0.25, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)}
