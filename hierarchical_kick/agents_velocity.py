@@ -98,15 +98,19 @@ class HKVelocityOfficialCyberDog2FlatPPORunnerCfg(
         super().__post_init__()
 
         self.experiment_name = "hk_velocity_flat_cyberdog2"
-        # 探索降噪（round-5→6；训练超参，非冻结低层契约）：官方 init_noise_std
-        # 1.0 下 12 维独立高斯 × 动作 scale 0.5 = kp25 弱执行器上的 25Hz 全腿
-        # 乱抖——13 步团灭，全缓冲无长存活样本，PPO 优势梯度被方差淹没锁死
-        # （round-1~5 递进诊断；零动作×训练事件面 4096env 60 步零身体接触，
-        # 环境面/奖励面均健康）。std 0.5 仍过暴（目标抖动 ±0.25 rad）；
-        # round-6 取 0.15（目标抖动 ±0.075 rad ≈ xiaomi 成功面
-        # scale 0.25×std1.0 的等效探索幅值，动作契约 0.5 保持不动；std 为
-        # 逐状态可学习参数，步态发现后可自增）。
-        self.policy.init_noise_std = 0.15
+        # PPO 超参（round-7；训练超参，非冻结低层契约——模型结构
+        # MLP[128,128,128] ELU 与 obs/动作契约保持官方不动）：采纳 xiaomi
+        # 成功快照（vf_500_benchmark params/agent.yaml，该本体唯一已证
+        # 可走配置）与本体的三处关键差异——
+        #   entropy_coef 0.01→0.0005：官方熵压逼策略维持高 std=持续注入
+        #     抖动能量（round-6 实测 std 自增 0.15→0.40 = kp25 永久振动
+        #     致死）；低熵压让 std 快速收敛。
+        #   learning_rate 1e-3→1e-4：弱执行器上防策略鞭甩（xiaomi 同值）。
+        #   init_noise_std→0.5：等效 xiaomi std1.0×scale0.25 的探索幅值
+        #     （±0.25 rad 目标抖动；本包动作契约 scale 0.5 保持不动）。
+        self.policy.init_noise_std = 0.5
+        self.algorithm.entropy_coef = 0.0005
+        self.algorithm.learning_rate = 1.0e-4
 
 
 __all__ = [
