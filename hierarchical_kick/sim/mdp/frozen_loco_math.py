@@ -1,26 +1,20 @@
 # ---------------------------------------------------------------------------
-# UPPER 自建（非 vendor）— hierarchical_kick.sim.mdp.frozen_loco_math
+# hierarchical_kick.sim.mdp.frozen_loco_math — 冻结低层数学面（纯 torch，
+# 零 isaaclab——离线单测可按路径加载直测）。isaaclab-facing 的 ActionTerm
+# 薄壳在 :mod:`frozen_loco_action`（本目录同级）。
 #
-# U-Kick arm D「真分层」的冻结低层数学面（纯 torch，零 isaaclab——离线
-# 单测可按路径加载直测，ball_mdp 同款拆分纪律）。isaaclab-facing 的
-# ActionTerm 薄壳在 :mod:`frozen_loco_action`（本目录同级）。
-#
-# 【官方口径 2026-10-09】缺省低层约定 = 上游官方 velocity-flat（obs 48 维
-# 单帧：linvel→ang_vel→gravity→cmd→q→qd→last_action，joint_vel/base_ang_vel
-# raw 无缩放，动作 default + 0.5⊙action 均匀 0.5）——低层 ckpt 由
+# 缺省低层约定 = 官方 velocity-flat（obs 48 维单帧：linvel→ang_vel→
+# gravity→cmd→q→qd→last_action，joint_vel/base_ang_vel raw 无缩放，动作
+# default + 0.5⊙action 均匀 0.5）——低层 ckpt 由
 # HK-Velocity-Flat-Unitree-Go2-v0 训练面产出（sim/velocity_official_cfg.py）。
-# 旧 U4b B 臂契约（proprio42 前缀 + scale_vec 逐关节）降级为 legacy 分支：
+# 旧契约（proprio42 前缀 + scale_vec 逐关节）保留为 legacy 分支：
 #   - assemble_low_level_obs          → 官方布局（缺省）；
 #   - assemble_low_level_obs_legacy   → 旧 48 布局（proprio42 + linvel + cmd；
 #     joint_vel ×0.05 / ang_vel ×0.2 适配表参数）；
-#   - assemble_proprio42              → 旧 42 前缀（legacy 专用，不再进缺省路径）。
-# 本模块把组装公式做成纯函数（偏移常量复用 core/contracts.py 单一真相源，
-# **禁止**复制参数），供：
-#   - frozen_loco_action.apply_actions 的逐步组装（sim 路径）；
-#   - 离线 fake tensor 单测（对 contracts 偏移常量逐位断言）。
-#
-# ⚠️ 推理面：组装**不加噪声**（Unoise 只在训练 obs 管线由 isaaclab 施加；
-# 冻结低层以真值 obs 跑 deterministic mean——play 探针/oracle 链同款口径）。
+#   - assemble_proprio42              → 旧 42 前缀（legacy 专用）。
+# 组装公式为纯函数（偏移常量复用 core/contracts.py 单一真相源，
+# **禁止**复制参数）；⚠️ 推理面组装**不加噪声**（Unoise 只在训练 obs 管线
+# 由 isaaclab 施加；冻结低层以真值 obs 跑 deterministic mean）。
 # ---------------------------------------------------------------------------
 
 """Frozen low-level observation assembly math (pure torch; zero isaaclab)."""
@@ -108,7 +102,7 @@ def assemble_low_level_obs(
     ):
         if tuple(t.shape) != shape:
             raise ValueError(
-                f"[upper][armD] 低层 obs 组装形状不符: {name} "
+                f"[upper] 低层 obs 组装形状不符: {name} "
                 f"{tuple(t.shape)} != {shape}")
     # [0:3) base_lin_vel / [3:6) base_ang_vel / [6:9) projected_gravity
     out[:, OFFICIAL_OBS_LIN_VEL:OFFICIAL_OBS_ANG_VEL] = base_lin_vel
@@ -127,7 +121,7 @@ def assemble_low_level_obs(
 
 
 # --------------------------------------------------------------------------- #
-# legacy 分支——U4b B 臂旧 48 布局（proprio42 前缀 + linvel + cmd）
+# legacy 分支——旧契约 48 布局（proprio42 前缀 + linvel + cmd）
 # --------------------------------------------------------------------------- #
 def assemble_proprio42(
     joint_pos: torch.Tensor,
@@ -143,7 +137,7 @@ def assemble_proprio42(
 ) -> torch.Tensor:
     """组装 decoder proprio 42 维前缀（contracts §1.1 适配表；**legacy 专用**）。
 
-    ⚠️ legacy：旧 U4b 契约（joint_vel ×0.05 / ang_vel ×0.2）；官方口径低层
+    ⚠️ legacy：旧契约（joint_vel ×0.05 / ang_vel ×0.2）；官方口径低层
     不走本函数。通道序（= 旧 48 维低层 obs 的前 42 通道，单一实现源）::
 
         [0:12)   joint_pos_rel = joint_pos − default_joint_pos   （scale 1）
@@ -193,7 +187,7 @@ def assemble_low_level_obs_legacy(
     ang_vel_scale: float = SCALE_BASE_ANG_VEL,
     out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """组装冻结低层 48 维 obs（**legacy U4b B 臂契约**；纯函数——单测对象）。
+    """组装冻结低层 48 维 obs（**legacy 旧契约**；纯函数——单测对象）。
 
     ⚠️ legacy 分支（--low_level_convention legacy 才消费；缺省官方布局走
     :func:`assemble_low_level_obs`）。通道序 = 旧 contracts.py §1.1 适配表
@@ -230,7 +224,7 @@ def assemble_low_level_obs_legacy(
     ):
         if tuple(t.shape) != shape:
             raise ValueError(
-                f"[upper][armD] 低层 obs 组装形状不符: {name} "
+                f"[upper] 低层 obs 组装形状不符: {name} "
                 f"{tuple(t.shape)} != {shape}")
     # [42:45) base_lin_vel
     out[:, OFF_LAST_ACTION + ACTION_DIM:
@@ -255,14 +249,14 @@ def joint_target_from_low_action(
     if low_action.shape != default_joint_pos.shape or \
             low_action.shape != scale_vec.shape:
         raise ValueError(
-            f"[upper][armD] 关节目标公式形状不符: low_action "
+            f"[upper] 关节目标公式形状不符: low_action "
             f"{tuple(low_action.shape)} default {tuple(default_joint_pos.shape)}"
             f" scale {tuple(scale_vec.shape)}")
     return default_joint_pos + scale_vec * low_action
 
 
 if LOW_LEVEL_OBS_DIM != PROPRIO_DIM + BASE_LIN_VEL_DIM + CMD_DIM:
-    raise ValueError("[upper][armD] 低层 obs 维契约漂移（contracts 单源）")
+    raise ValueError("[upper] 低层 obs 维契约漂移（contracts 单源）")
 
 __all__ = [
     "LOW_LEVEL_OBS_DIM",

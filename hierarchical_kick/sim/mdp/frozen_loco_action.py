@@ -4,18 +4,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ---------------------------------------------------------------------------
-# UPPER 自建（非 vendor）— hierarchical_kick.sim.mdp.frozen_loco_action
+# hierarchical_kick.sim.mdp.frozen_loco_action — cmd「真分层」动作 term：
+# 上层 RL 动作 = 3 维机体系速度命令 [vx,vy,wz]，动作不进关节，而是写入
+# base_velocity 命令 buffer，由**冻结低层** policy（deterministic mean）
+# 每步把命令转成 12 维关节目标（经典「冻结低层 locomotion + 高层命令 RL」
+# 分层）。
 #
-# U-Kick 第四臂「真分层」对照（arm D；docs/UKICK_BALL_ENV_DESIGN.md §0 谱系
-# 扩展）：上层 RL 策略动作空间 = 3 维机体系速度命令 [vx,vy,wz]，动作不进
-# 关节，而是写入 base_velocity 命令 buffer，由**冻结低层** policy
-# （deterministic mean）每步把命令转成 12 维关节目标。经典「冻结低层
-# locomotion + 高层命令 RL」分层（低层冻结、高层可训）。
-#
-# 低层约定（2026-10-09 官方口径对齐；cfg.low_level_convention 分派）：
-#   【official（缺省）】上游官方 velocity-flat 契约——低层 ckpt =
+# 低层约定（cfg.low_level_convention 分派）：
+#   【official（缺省）】官方 velocity-flat 契约——低层 ckpt =
 #     HK-Velocity-Flat-Unitree-Go2-v0 训练产物（sim/velocity_official_cfg.py
-#     覆写回上游口径后训练；缺省 weights/velocity_flat_official/model_walk.pt）：
+#     产出；缺省 weights/velocity_flat_official/model_walk.pt）：
 #     - obs 48 = 官方单帧布局（linvel→ang_vel→gravity→cmd→q→qd→last_action，
 #       joint_vel/base_ang_vel raw 无缩放）——组装公式
 #       frozen_loco_math.assemble_low_level_obs（纯函数，离线单测对象）；
@@ -24,7 +22,7 @@
 #     - 网络结构 = 官方 go2 agents cfg（MLP[128,128,128] ELU）——ckpt
 #       state_dict 反推对账（core.low_level_actor.
 #       validate_official_actor_structure，漂移 fail-fast）。
-#   【legacy】旧 U4b B 臂契约（weights/model_2999.pt）：
+#   【legacy】旧契约（weights/model_2999.pt）：
 #     - obs 48 = proprio42 前缀 + linvel + cmd（joint_vel/ang_vel 按旧适配
 #       表缩放，参数单源在 frozen_loco_math legacy 分支/contracts）——
 #       frozen_loco_math.assemble_low_level_obs_legacy；
@@ -34,16 +32,14 @@
 #   ``stochastic_output=False``（deterministic mean）+ torch.no_grad +
 #   eval + requires_grad_(False)（冻结三件套）。
 #
-# ⚠️ 类型注解纪律：env 面注解**一律加引号或 TYPE_CHECKING**（ball_env_cfg
-# 曾因 runtime 注解炸过 ManagerBasedRLEnv NameError——configclass 字段注解
-# 求值早于 isaaclab.envs 完整初始化；本文件 ``from __future__ import
-# annotations`` 全程生效）。
+# ⚠️ 类型注解纪律：env 面注解**一律加引号或 TYPE_CHECKING**（configclass
+# 字段注解求值早于 isaaclab.envs 完整初始化，runtime 注解会 NameError；
+# 本文件 ``from __future__ import annotations`` 全程生效）。
 #
 # 【无时间抽象 / action repeat 说明】本 term 为 50Hz 逐步命令：低层在每个
 # sim 子步（decimation 内 4 次/环境步）重观测并重算关节目标，命令 buffer
-# 逐子步覆写——与三臂 JointPositionAction 的子步写入语义对齐，公平性
-# 「差异只在动作接口」。无 ASE 式 6Hz 低频命令 + 5 步 hold 的时间抽象
-# （U33 审计注：那是后续变体，不进本对照）。
+# 逐子步覆写——与训练面 JointPositionAction 的子步写入语义对齐，公平性
+# 「差异只在动作接口」。无 ASE 式 6Hz 低频命令 + 5 步 hold 的时间抽象。
 #
 # 【命令 resample 竞争分析】ManagerBasedRLEnv.step 时序：apply_actions（写
 # 命令 buffer，decimation 循环内）→ 终止/奖励 → reset（command_manager.
@@ -56,7 +52,7 @@
 # ---------------------------------------------------------------------------
 
 """Frozen-locomotion action term: high-level [vx,vy,wz] commands → frozen
-low-level policy → 12 joint position targets (U-Kick arm D)."""
+low-level policy → 12 joint position targets (U-Kick cmd face)."""
 
 from __future__ import annotations
 
@@ -96,7 +92,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.envs import ManagerBasedRLEnv
 
-# arm D 上层动作维（机体系速度命令 [vx,vy,wz]；= core.cmd_actor.CMD_ACTION_DIM
+# 上层动作维（机体系速度命令 [vx,vy,wz]；= core.cmd_actor.CMD_ACTION_DIM
 # 同值——core 面不依赖 sim 面，此处独立常量并经单测锚定同值）
 CMD_ACTION_DIM = 3
 
@@ -131,7 +127,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
                                or "official")
         if self._convention not in LOW_LEVEL_CONVENTIONS:
             raise ValueError(
-                f"[upper][armD] low_level_convention 非法: "
+                f"[upper] low_level_convention 非法: "
                 f"{self._convention!r}（∈ {LOW_LEVEL_CONVENTIONS}）")
         # -- 冻结资产 fail-fast（路径存在性；空串 = 约定缺省路径） --
         path = str(cfg.low_level_ckpt_path) or (
@@ -139,18 +135,18 @@ class FrozenLocoJointPositionAction(ActionTerm):
             if self._convention == "official" else DEFAULT_LOW_LEVEL_CKPT)
         if not path:
             raise ValueError(
-                "[upper][armD] low_level_ckpt_path 缺失（冻结低层是显式资产；"
+                "[upper] low_level_ckpt_path 缺失（冻结低层是显式资产；"
                 "train.py --low_level_ckpt 或 cfg 显式传路径）")
         if not os.path.isfile(path):
             raise FileNotFoundError(
-                f"[upper][armD] 低层 ckpt 不存在: {path}")
+                f"[upper] 低层 ckpt 不存在: {path}")
         # -- 关节解析（PhysX 槽位序；".*" → 全关节 slice） --
         self._joint_ids, self._joint_names = self._asset.find_joints(
             self.cfg.joint_names)
         self._num_joints = len(self._joint_names)
         if self._num_joints != ACTION_DIM:
             raise ValueError(
-                f"[upper][armD] 低层动作契约 12 关节 != 解析 {self._num_joints}"
+                f"[upper] 低层动作契约 12 关节 != 解析 {self._num_joints}"
                 f"（{self._joint_names}；go2 装配漂移，fail-fast）")
         if self._num_joints == self._asset.num_joints:
             self._joint_ids = slice(None)
@@ -161,7 +157,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
         #   解析；core/scale_vec 单源表经 cfg 传入）。
         if self._convention == "official":
             if self.cfg.scale:
-                print(f"[upper][armD] official 约定忽略 cfg.scale 逐关节表"
+                print(f"[upper] official 约定忽略 cfg.scale 逐关节表"
                       f"（均匀 {OFFICIAL_ACTION_SCALE}；官方口径不走逐关节 "
                       f"scale_vec）")
             self._scale_vec = torch.full(
@@ -170,7 +166,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
         else:
             if not isinstance(self.cfg.scale, dict):
                 raise ValueError(
-                    "[upper][armD] legacy 约定 scale 须为逐关节 dict"
+                    "[upper] legacy 约定 scale 须为逐关节 dict"
                     "（core/scale_vec.go2_action_scale_table() 单源）")
             index_list, _, value_list = string_utils.resolve_matching_names_values(
                 self.cfg.scale, self._joint_names)
@@ -191,7 +187,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
             self.num_envs, LOW_LEVEL_OBS_DIM, device=self.device)
         # -- 冻结低层 policy（构造期装载 + freeze 三件套；无梯度/无优化器） --
         # 结构按约定：official = 官方 agents cfg（ckpt sd 反推对账）；legacy
-        # = U4b B 臂 [128,128,128]。
+        # = [128,128,128]。
         ckpt_full, sd = resolve_actor_state_dict(path, device=self.device)
         if self._convention == "official":
             hidden_dims = validate_official_actor_structure(sd)
@@ -217,7 +213,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
         #    ctor 期 env.command_manager 尚不存在——apply_actions 首步解析） --
         self._cmd_term = None
         _it = ckpt_full.get("iter", "?")
-        print(f"[upper][armD] 冻结低层装载完成（{self._convention}）: {path} "
+        print(f"[upper] 冻结低层装载完成（{self._convention}）: {path} "
               f"(iter={_it}, hidden={hidden_dims}, obs={LOW_LEVEL_OBS_DIM} 维"
               f"契约 deterministic；50Hz 逐步命令，无时间抽象)")
 
@@ -244,7 +240,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
     @property
     def low_level_last_action(self) -> torch.Tensor:
         """低层上一步 pre-scale 输出 (N,12)（高层 obs ``last_action`` 通道
-        取值源——arm D 高层动作是 3 维命令，kick 契约 42-prefix 的
+        取值源——cmd 高层动作是 3 维命令，kick 契约 42-prefix 的
         last_action 12 维通道改由低层输出填充，保持 55 维 obs 契约与
         「关节级 last action」通道语义）。"""
         return self._low_last_action
@@ -260,7 +256,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
         """命令写入 → 低层 obs 组装 → 冻结 forward → 关节目标入 sim。
 
         每 sim 子步调用（decimation 内 4 次/环境步）：低层每子步重观测
-        重算（50Hz 逐步命令，无时间抽象）——与三臂关节目标子步覆写语义
+        重算（50Hz 逐步命令，无时间抽象）——与训练面关节目标子步覆写语义
         对齐；deterministic 下 4 次输出随最新观测微更新，命令 buffer 同值
         覆写幂等。
         """
@@ -297,7 +293,7 @@ class FrozenLocoJointPositionAction(ActionTerm):
 
     def reset(self, env_ids=None) -> None:
         """env reset 语义：raw 命令 + 低层 last_action 清零（低层 obs 的
-        last_action 通道回零起点——U4b 训练 env 侧 action term reset 同款）。"""
+        last_action 通道回零起点——训练期 env 侧 action term reset 同款）。"""
         if env_ids is None:
             env_ids = slice(None)
         self._raw_actions[env_ids] = 0.0
@@ -306,9 +302,9 @@ class FrozenLocoJointPositionAction(ActionTerm):
 
 @configclass
 class FrozenLocoJointPositionActionCfg(ActionTermCfg):
-    """arm D 动作面 cfg：3 维命令输入 + 冻结低层资产（路径 fail-fast）。
+    """cmd 动作面 cfg：3 维命令输入 + 冻结低层资产（路径 fail-fast）。
 
-    ``joint_names`` 语义同 JointPositionActionCfg（arm D 恒 ``[".*"]``）；
+    ``joint_names`` 语义同 JointPositionActionCfg（恒 ``[".*"]``）；
     ``scale`` 仅 legacy 约定消费（core/scale_vec 单源 dict；official 约定
     忽略——均匀 0.5）；``low_level_convention`` 分派（缺省 official）；
     低层资产字段 = 路径（空串 = 约定缺省，构造期存在性 fail-fast）。
@@ -319,7 +315,7 @@ class FrozenLocoJointPositionActionCfg(ActionTermCfg):
     前向引用）。"""
 
     joint_names: list[str] = None  # type: ignore[assignment]
-    """动作映射的关节名/正则（arm D 恒 [".*"] = 12 关节 PhysX 槽位序）。"""
+    """动作映射的关节名/正则（恒 [".*"] = 12 关节 PhysX 槽位序）。"""
 
     scale: dict[str, float] = None  # type: ignore[assignment]
     """逐关节 action scale（**仅 legacy 约定消费**：core/scale_vec.
@@ -332,7 +328,7 @@ class FrozenLocoJointPositionActionCfg(ActionTermCfg):
 
     low_level_convention: str = "official"
     """低层约定分派（official = 官方 velocity-flat 口径，缺省；legacy =
-    旧 U4b B 臂契约——旧 48 布局 + 逐关节 scale_vec）。"""
+    旧契约——旧 48 布局 + 逐关节 scale_vec）。"""
 
     command_term_name: str = "base_velocity"
     """命令写入目标 term 名（CommandManager.get_term 键 = commands cfg
@@ -348,15 +344,15 @@ class FrozenLocoJointPositionActionCfg(ActionTermCfg):
 def low_level_last_action_obs(env: 'ManagerBasedRLEnv') -> torch.Tensor:
     """高层 obs 项：低层上一步输出 (N,12)（KickPolicyCfgCmd 的 actions 项）。
 
-    arm D 的 ``mdp.last_action``（= action_manager.action）是 3 维命令，
+    cmd 面的 ``mdp.last_action``（= action_manager.action）是 3 维命令，
     会破坏 55 维 kick obs 契约的 42-prefix 通道序——本函数改从冻结动作
     term 的 ``low_level_last_action`` buffer 取值，通道语义（pre-scale 关节
-    偏移）与三臂逐位同构，obs 维契约 55 保持。
+    偏移）与训练面逐位同构，obs 维契约 55 保持。
     """
     term = env.action_manager.get_term("joint_pos")
     if not hasattr(term, "low_level_last_action"):
         raise RuntimeError(
-            "[upper][armD] actions.joint_pos 非冻结低层动作 term"
+            "[upper] actions.joint_pos 非冻结低层动作 term"
             "（KickPolicyCfgCmd 仅配 Go2KickFlatEnvCfgCommand 使用）")
     return term.low_level_last_action
 

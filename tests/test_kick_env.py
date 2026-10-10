@@ -1,24 +1,23 @@
-"""U-Kick 球 env WP2 — ball_mdp 数学面 + 常量契约 + cfg/register 源码断言。
+"""U-Kick 球 env — ball_mdp 数学面 + 常量契约 + cfg/register 源码断言。
 
-判据（docs/UKICK_BALL_ENV_DESIGN.md §3 规格、§7 拍板、§8-WP2 名称契约；
-奖励/终止规则接口 = owner 二次拍板 2026-09-30 对齐 soccer_absolute phase0，
+判据（球 env §3 规格 + 奖励/终止规则接口 = 上游 soccer_absolute 公式面对齐，
 权重按 go2 平台适配单源 KickRewardWeightsCfg）：
 - ball_mdp 纯函数数学：ball_rel_b（yaw 0/±90° 手算 body 系）、goal_rel_b
   （sin²+cos²=1 恒等式 + 方向）、push_geometry_b（规范位形 cos_behind≈1、
   零向量防除零）、goal_scored 真假例、ball_out 半径边界；
-  奖励规则族 donor 数值语义单测：robot_fallen 双条件（重力/高度支 + 严格
+  奖励规则族上游数值语义单测：robot_fallen 双条件（重力/高度支 + 严格
   边界）、approach_ball（投影/封顶/正负支/距离窗/低速门）、ball_distance
   （exp 核）、behind_ball（球后位形核 + 方向参数）、ball_progress_dense
   （Δy 单边 clamp + 近球门控 + 缓存生命周期 + reset 免疫）、
   ball_out_of_bounds（mask ≡ ball_out）、robot_fallen_penalty（1.0 mask）、
   robot_out_of_field（工作区框 + 逐 env origin 帧）、wall_stuck（dist+speed
   双条件，接口在位 cfg 不挂载）；
-  逐 env goal 帧回归（A100 10-env oracle 实测确诊的世界系 bug：判线/出界/
-  方向 obs 以 env_origins + GOAL_CENTER 为锚，远端 env 不再误判）；
+  逐 env goal 帧回归（判线/出界/方向 obs 以 env_origins + GOAL_CENTER
+  为锚，远端 env 不再误判）；
   旧 ball_progress_shaping prev-cur 缓存面移除防呆（函数面/缓存属性名/
   reset 钩子消费点零残留）。
 - 常量与维度：KICK_OBS_DIM == 55 == 42+3+3+4+3；球参数/摔判定/工作区框
-  常量 == donor 值或注释论证值。
+  常量 == 上游值或注释论证值。
 - ball_env_cfg.py 源码断言：task-only 置 None 面、权重单源
   KickRewardWeightsCfg 字段默认值、8 项奖励挂载 + survival 显式化、
   终止面（root_height→robot_fallen 双条件替换 + robot_out_of_field +
@@ -243,7 +242,7 @@ def test_ball_out_impl_radius_boundary():
 
 
 # --------------------------------------------------------------------------- #
-# 1b. 逐 env goal 帧（核心回归；A100 10-env oracle 实测确诊的世界系 bug）
+# 1b. 逐 env goal 帧（核心回归：远端 env 世界系坐标不得误判）
 # --------------------------------------------------------------------------- #
 
 def test_goal_scored_per_env_frame():
@@ -347,15 +346,15 @@ def test_push_geometry_b_per_env_frame():
 
 
 # --------------------------------------------------------------------------- #
-# 1c. 奖励/终止规则族（owner 二次拍板 2026-09-30：phase0 规则接口对齐；
-#     donor 数值语义单测，公式面 = donor rewards.py/terminations.py 逐行）
+# 1c. 奖励/终止规则族（上游规则接口对齐；数值语义单测，
+#     公式面 = 上游 rewards.py/terminations.py 逐行）
 # --------------------------------------------------------------------------- #
 
 def test_robot_fallen_impl_truth_table():
-    """摔判定双条件（donor terminations.py:42-59 语义）：重力支/高度支/严格边界。
+    """摔判定双条件（上游 terminations.py:42-59 语义）：重力支/高度支/严格边界。
 
     站立 proj_grav_z≈−1（直立）不判摔；倾斜超 ~60°（gz>−0.5）判摔；
-    base 高 < 0.16 判摔（go2 站高 0.227）。两支均严格不等号（donor 同款）。
+    base 高 < 0.16 判摔（go2 站高 0.227）。两支均严格不等号（同上游）。
     """
     cases = [
         (-1.0, 0.227, False),  # 站立
@@ -390,13 +389,13 @@ def test_robot_fallen_penalty_wrapper_mask():
     rew = ball_mdp.robot_fallen_penalty(env)
     assert rew.dtype == torch.float32
     assert torch.allclose(rew, torch.tensor([0.0, 1.0, 1.0]))
-    # 阈值参数化（wrapper 签名同 donor penalty/termination 面的 threshold 形参）
+    # 阈值参数化（wrapper 签名同上游 penalty/termination 面的 threshold 形参）
     rew2 = ball_mdp.robot_fallen_penalty(env, grav_threshold=-0.35)
     assert torch.allclose(rew2, torch.tensor([0.0, 1.0, 0.0]))
 
 
-def test_approach_ball_velocity_impl_donor_semantics():
-    """朝球速度投影（donor rewards.py:267-311 数值语义）：投影/封顶/正负支/
+def test_approach_ball_velocity_impl_upstream_semantics():
+    """朝球速度投影（上游 rewards.py:267-311 数值语义）：投影/封顶/正负支/
     距离窗/低速门逐面手算。"""
     base = torch.tensor([[0.0, 0.0, 0.11]])
     ball = torch.tensor([[1.0, 0.0, 0.11]])  # 同高 → dist=1，视向 = +x
@@ -404,7 +403,7 @@ def test_approach_ball_velocity_impl_donor_semantics():
     got = ball_mdp._approach_ball_velocity_reward_impl(
         base, ball, torch.tensor([[0.5, 0.0, 0.0]]))
     assert abs(float(got[0]) - 0.5) < 1e-6
-    # 远离球：proj=−0.5 → 负支 −2.0×0.5 = −1.0（负支更重，donor 同）
+    # 远离球：proj=−0.5 → 负支 −2.0×0.5 = −1.0（负支更重，同上游）
     got = ball_mdp._approach_ball_velocity_reward_impl(
         base, ball, torch.tensor([[-0.5, 0.0, 0.0]]))
     assert abs(float(got[0]) - (-1.0)) < 1e-6
@@ -416,7 +415,7 @@ def test_approach_ball_velocity_impl_donor_semantics():
     got = ball_mdp._approach_ball_velocity_reward_impl(
         base, torch.tensor([[5.0, 0.0, 0.11]]), torch.tensor([[0.5, 0.0, 0.0]]))
     assert float(got[0]) == 0.0
-    # 低速门（speed < speed_threshold）：零（donor :306-309 语义）
+    # 低速门（speed < speed_threshold）：零（上游 :306-309 语义）
     got = ball_mdp._approach_ball_velocity_reward_impl(
         base, ball, torch.tensor([[0.5, 0.0, 0.0]]), speed_threshold=1.0)
     assert float(got[0]) == 0.0
@@ -427,10 +426,10 @@ def test_approach_ball_velocity_impl_donor_semantics():
 
 
 def test_ball_distance_impl_exp_kernel():
-    """球距 exp 核（donor rewards.py:723-737 数值语义）：scale·exp(−d/T)。"""
+    """球距 exp 核（上游 rewards.py:723-737 数值语义）：scale·exp(−d/T)。"""
     base = torch.tensor([[0.0, 0.0, 0.2]])
-    ball = torch.tensor([[2.0, 0.0, 0.11]])  # 水平距 2（impl 2D 口径，donor 同）
-    got = ball_mdp._ball_distance_reward_impl(base, ball)  # scale=1, T=2（donor 默认）
+    ball = torch.tensor([[2.0, 0.0, 0.11]])  # 水平距 2（impl 2D 口径，同上游）
+    got = ball_mdp._ball_distance_reward_impl(base, ball)  # scale=1, T=2（上游默认）
     assert abs(float(got[0]) - math.exp(-1.0)) < 1e-6
     # 参数化：scale 线性、temperature 换核宽
     got = ball_mdp._ball_distance_reward_impl(base, ball, scale=0.05, temperature=1.0)
@@ -441,13 +440,13 @@ def test_ball_distance_impl_exp_kernel():
 
 
 def test_behind_ball_impl_exp_kernel_and_sign():
-    """球后位形核（donor rewards.py:778-795 数值语义）：behind_point = 球位
+    """球后位形核（上游 rewards.py:778-795 数值语义）：behind_point = 球位
     沿己方球门方向平移 behind_offset；=1 当狗恰在球正后（进攻 +y → 后 = −y）。"""
     ball = torch.tensor([[0.0, 1.0, 0.11]])
-    behind_pt = torch.tensor([[0.0, 1.0 - 0.45, 0.2]])  # 球后 0.45m（donor offset 默认）
-    got = ball_mdp._behind_ball_reward_impl(behind_pt, ball)  # scale=0.35, T=1.5（donor 默认）
+    behind_pt = torch.tensor([[0.0, 1.0 - 0.45, 0.2]])  # 球后 0.45m（上游 offset 默认）
+    got = ball_mdp._behind_ball_reward_impl(behind_pt, ball)  # scale=0.35, T=1.5（上游默认）
     assert abs(float(got[0]) - 0.35) < 1e-6  # dist=0 → exp(0)=1
-    # 狗在球位：dist=0.45 → 0.35·exp(−0.3)（手算 donor 核）
+    # 狗在球位：dist=0.45 → 0.35·exp(−0.3)（手算上游核）
     got = ball_mdp._behind_ball_reward_impl(torch.tensor([[0.0, 1.0, 0.2]]), ball)
     assert abs(float(got[0]) - 0.35 * math.exp(-0.45 / 1.5)) < 1e-6
     # attack_sign 翻转方向（进攻 −y → 后 = +y）
@@ -456,8 +455,8 @@ def test_behind_ball_impl_exp_kernel_and_sign():
     assert abs(float(got[0]) - 0.35) < 1e-6
 
 
-def test_ball_progress_dense_impl_donor_semantics():
-    """Δy 进攻方向单边 clamp 核（donor rewards.py:677-702 数值语义）：
+def test_ball_progress_dense_impl_upstream_semantics():
+    """Δy 进攻方向单边 clamp 核（上游 rewards.py:677-702 数值语义）：
     clamp(sign·Δy)·近球门控 + NaN 懒重播种。"""
     base = torch.tensor([[0.0, 0.0, 0.2]])
     ball = torch.tensor([[0.0, 1.0, 0.11]])  # 距球 1.0 < max_dist 1.0？严格 < → 需更近
@@ -466,7 +465,7 @@ def test_ball_progress_dense_impl_donor_semantics():
     rew, cache = ball_mdp._ball_progress_dense_impl(torch.tensor([1.0]), torch.tensor([1.5]),
                                                     base, ball)
     assert abs(float(rew[0]) - 2.5) < 1e-6 and float(cache[0]) == 1.5
-    # 后退 Δy=−0.5 → 单边 clamp 0（donor 只奖进攻方向，不罚后退）
+    # 后退 Δy=−0.5 → 单边 clamp 0（同上游只奖进攻方向，不罚后退）
     rew, _ = ball_mdp._ball_progress_dense_impl(torch.tensor([1.0]), torch.tensor([0.5]),
                                                 base, ball)
     assert float(rew[0]) == 0.0
@@ -474,7 +473,7 @@ def test_ball_progress_dense_impl_donor_semantics():
     rew, cache = ball_mdp._ball_progress_dense_impl(torch.tensor([float("nan")]),
                                                     torch.tensor([1.5]), base, ball)
     assert float(rew[0]) == 0.0 and float(cache[0]) == 1.5
-    # 近球门控：机器人远球（dist ≥ max_dist）→ 0（donor "只在贴身控球时给分"）
+    # 近球门控：机器人远球（dist ≥ max_dist）→ 0（上游 "只在贴身控球时给分"）
     far = torch.tensor([[0.0, 5.0, 0.2]])
     rew, _ = ball_mdp._ball_progress_dense_impl(torch.tensor([1.0]), torch.tensor([1.5]),
                                                 far, ball)
@@ -486,10 +485,10 @@ def test_ball_progress_dense_impl_donor_semantics():
 
 
 def test_ball_progress_dense_wrapper_reset_reseed():
-    """[X-HK4] 每集首步重播种：残留缓存（上集终点 y_prev=5.0）→ reset 后球
-    y=2.8（> y_prev，旧"单边 clamp 免疫"论证失效的退化洞）→ 首步 progress
-    必须=0（prev 取 cur）+ 缓存重播种；次步起恢复正常差分。"""
-    # 狗 (0,2.7)、球 spawn (0,2.8)——H 臂布局（近球门控内 dist=0.1）
+    """每集首步重播种：残留缓存（上集终点 y_prev=5.0）→ reset 后球 y=2.8
+    （> y_prev，裸差分会白给正向假 progress）→ 首步 progress 必须=0
+    （prev 取 cur）+ 缓存重播种；次步起恢复正常差分。"""
+    # 狗 (0,2.7)、球 spawn (0,2.8)（近球门控内 dist=0.1）
     base = torch.tensor([[0.0, 2.7, 0.2], [0.0, 2.7, 0.2]])
     quat = _YAW_QP90.expand(2, 4).contiguous()
     ball = torch.tensor([[0.0, 2.8, 0.11], [0.0, 2.8, 0.11]])
@@ -551,7 +550,7 @@ def test_ball_progress_dense_wrapper_cache_lifecycle():
 
 
 # --------------------------------------------------------------------------- #
-# 1d. [X-HK5] spawn 随机化 + 距离轴课程（owner 指令 2026-10-10）
+# 1d. spawn 随机化 + 距离轴课程
 # --------------------------------------------------------------------------- #
 
 _XHK5_KR_FIELDS = dict(
@@ -569,7 +568,7 @@ def _xhk5_kr(**over):
 def test_ball_spawn_d_max_schedule_pure_logic():
     """d_max 课程调度（规格公式）：t=0 → 0.5 起点；t=warmup → 2.7 满域；
     线性中点 + clamp 双侧 + 单调性 + 参数化。"""
-    warmup = 500 * 24.0  # 500it × 24 步/it（本栈实测口径）
+    warmup = 500 * 24.0  # 500it × 24 步/it
     assert ball_mdp.ball_spawn_d_max(0.0, warmup) == 0.5
     assert abs(ball_mdp.ball_spawn_d_max(warmup, warmup) - 2.7) < 1e-12
     assert abs(ball_mdp.ball_spawn_d_max(warmup * 2, warmup) - 2.7) < 1e-12  # clamp 上界
@@ -662,7 +661,7 @@ def _fake_env_for_reset(ball, kr, env_origins: torch.Tensor,
 
 
 def test_reset_ball_root_state_curriculum_pipeline():
-    """[X-HK5] reset 事件管道：课程阶段 bounds + 满域扩张 + origin 帧 +
+    """reset 事件管道：课程阶段 bounds + 满域扩张 + origin 帧 +
     z/quat/速度保持 + clamp + override 逃逸口 + disabled 固定 spawn。"""
     torch.manual_seed(11)
     n = 2048
@@ -716,9 +715,8 @@ def test_reset_ball_root_state_curriculum_pipeline():
 
 
 def test_ball_progress_dense_wrapper_random_spawn_reseed():
-    """[X-HK5] 随机 spawn 下 progress 重播种（owner 点名单测变体）：残留缓存
-    **低于**新采 spawn y（旧面会白给正向假 progress 的退化面）→ 每集首步
-    假信号必须 = 0；次步起正常差分。"""
+    """随机 spawn 下 progress 重播种：残留缓存 **低于**新采 spawn y（裸差分
+    会白给正向假 progress）→ 每集首步假信号必须 = 0；次步起正常差分。"""
     # 狗 (0,0)、球随机采到 (0.1, 0.45)（课程起点域内的真实采样形态）
     base = torch.tensor([[0.0, 0.0, 0.2], [0.0, 0.0, 0.2]])
     quat = _YAW_QP90.expand(2, 4).contiguous()
@@ -749,10 +747,10 @@ def test_ball_progress_dense_wrapper_random_spawn_reseed():
 
 
 # --------------------------------------------------------------------------- #
-# 1b. X-HK2 kick_event 奖励（自建过程引导项；检测面单源 kick_metrics）
+# kick_event 奖励（自建过程引导项；检测面单源 kick_metrics）
 # --------------------------------------------------------------------------- #
 
-_CD = 25  # 0.5s @50Hz（ball_env_cfg D 臂配置步数）
+_CD = 25  # 0.5s @50Hz（冷却步数）
 
 
 def test_kick_event_impl_cooldown_and_reset():
@@ -882,7 +880,7 @@ def test_robot_out_of_field_impl_and_wrapper_per_env_frame():
 
 
 def test_wall_stuck_impl_interface():
-    """wall_stuck 接口（donor terminations.py:78-93 dist+speed 双条件）：
+    """wall_stuck 接口（上游 terminations.py:78-93 dist+speed 双条件）：
     贴边 + 低速 → True；高速/离边 → False。**cfg 不挂载**（见 cfg 源码断言）。"""
     # 框 x∈[−1,5]：x=4.95 距右边 0.05 < 0.1，body 速率 0.1 < 0.3 → True
     pos = torch.tensor([[4.95, 0.0], [4.95, 0.0], [0.0, 0.0]])
@@ -919,15 +917,15 @@ def test_kick_obs_dim_contract_arithmetic():
     assert ball_mdp.KICK_OBS_DIM == proprio + 3 + 3 + 4 + 3
 
 
-def test_ball_geometry_constants_match_donor():
-    """球参数/球门/摔判定/工作区框常量 == donor 逐值或注释论证值。"""
+def test_ball_geometry_constants_match_upstream():
+    """球参数/球门/摔判定/工作区框常量 == 上游逐值或注释论证值。"""
     assert ball_mdp.GOAL_Y == 3.0
     assert ball_mdp.GOAL_HALF_WIDTH == 0.75  # mouth 宽 1.5m
     assert ball_mdp.GOAL_CENTER == (0.0, 3.0)
     assert ball_mdp.BALL_OUT_RADIUS == 6.0
     assert ball_mdp.BALL_RADIUS == 0.11
     assert ball_mdp.BALL_MASS == 0.43
-    # 摔判定双条件阈值（donor terminations.py:42 签名默认）
+    # 摔判定双条件阈值（上游 terminations.py:42 签名默认）
     assert ball_mdp.FALLEN_GRAV_THRESHOLD == -0.5
     assert ball_mdp.FALLEN_BODY_Z_THRESHOLD == 0.16
     # 机器人工作区框（任务域 3m + 追球缓冲；注释论证在案）
@@ -973,8 +971,8 @@ def _kick_cfg_src() -> str:
 
 
 def test_ball_env_cfg_syntax_and_provenance():
-    """AST 可解析 + donor provenance（scene.py:215-247 / 规则接口族）在案 +
-    零 donor import。"""
+    """AST 可解析 + 上游 provenance（scene.py:215-247 / 规则接口族）在案 +
+    零上游 import。"""
     src = _kick_cfg_src()
     ast.parse(src)
     assert "scene.py:215-247" in src  # 球物理 provenance
@@ -984,21 +982,20 @@ def test_ball_env_cfg_syntax_and_provenance():
     with open(_BALL_MDP_PATH, encoding="utf-8") as f:
         mdp_src = f.read()
     ast.parse(mdp_src)
-    for donor_ref in ("observations.py:73-79", "observations.py:81-88",
+    for upstream_ref in ("observations.py:73-79", "observations.py:81-88",
                       "observations.py:205-235",
                       "rewards.py:267-311", "rewards.py:723-737",
                       "rewards.py:778-795", "rewards.py:677-702",
                       "rewards.py:461-479", "rewards.py:37-102",
                       "terminations.py:42-59", "terminations.py:27-40",
                       "terminations.py:78-93"):
-        assert donor_ref in mdp_src, donor_ref
+        assert upstream_ref in mdp_src, upstream_ref
     assert "import soccer" not in mdp_src and "from soccer" not in mdp_src
 
 
 def test_ball_env_cfg_ball_scene_values():
-    """球场景逐值断言（donor scene.py:215-247 逐值照抄 + A100 实跑修复面：
-    contact filter 显式枚举 GO2_FOOT_BODIES、球 spawn 无 headless 死旋
-    visual_material）。"""
+    """球场景逐值断言（scene.py:215-247 逐值 + contact filter 显式枚举
+    GO2_FOOT_BODIES、球 spawn 无 headless 死旋 visual_material）。"""
     src = _kick_cfg_src()
     assert 'prim_path="{ENV_REGEX_NS}/Ball"' in src
     assert "radius=0.11" in src
@@ -1010,7 +1007,7 @@ def test_ball_env_cfg_ball_scene_values():
     assert "mass=0.43" in src
     assert "collision_enabled=True" in src
     assert "activate_contact_sensors=True" in src
-    # [X-HK5] spawn 常量面（owner 指令 2026-10-10）：狗 spawn 原点 (0,0)
+    # spawn 常量面：狗 spawn 原点 (0,0)
     # 常量单源 = mdp.DOG_SPAWN_XY（ball_mdp 内定义，cfg 经 mdp.* 消费）；
     # 球 init_state = 固定 spawn 逃逸口 BALL_SPAWN_XY=(0, GOAL_Y−0.2)；yaw=π/2
     assert "pos=(BALL_SPAWN_XY[0], BALL_SPAWN_XY[1], 0.11)" in src
@@ -1021,7 +1018,7 @@ def test_ball_env_cfg_ball_scene_values():
     assert "_dog_init.pos = (mdp.DOG_SPAWN_XY[0], mdp.DOG_SPAWN_XY[1]," in src
     assert "math.sin(0.25 * math.pi), math.cos(0.25 * math.pi)" in src  # yaw=π/2 xyzw
     assert "_dog_init.rot = DOG_SPAWN_YAW_QUAT_XYZW" in src
-    # headless 材质死旋防护（A100 实测；flat_env_cfg.py 头 U6 同型）：
+    # headless 材质死旋防护：
     # 球 spawn 不挂 visual_material（AST 面逐 Call 查 keyword——头注提及
     # 不算挂载），防护注释在位（录像阶段带 --enable_cameras 再启用）
     for node in ast.walk(ast.parse(src)):
@@ -1029,7 +1026,7 @@ def test_ball_env_cfg_ball_scene_values():
             assert all(kw.arg != "visual_material" for kw in node.keywords), \
                 "球 spawn 不得挂 visual_material（headless 死旋防护）"
     assert "headless 不挂" in src and "死旋" in src
-    # 球侧接触传感器 filter（A100 实跑修复）：显式枚举 = base + 4 足端
+    # 球侧接触传感器 filter：显式枚举 = base + 4 足端
     # （单源 GO2_FOOT_BODIES，逐 env 恰 5 prim）；反向断言 filter 段无
     # .* 通配 —— env_*/Robot/.*_foot 在 10 env 下跨 env 匹配 40 prim，
     # tensor API expected/found 警告 + 力矩阵形状漂移，禁止回退通配
@@ -1069,8 +1066,8 @@ def test_ball_env_cfg_task_only_rewards():
                   "ball_progress: float = 0.10",
                   "ball_out_of_bounds: float = -2.0"):
         assert field in src, field
-    assert "phase0 raw" in src and "量纲理由" in src  # 对照表头注释在案
-    # 8 项规则接口挂载（权重一律经单源 w.*；2026-09-30 二次拍板）
+    assert "量纲理由" in src  # 权重表量纲理由列在案
+    # 8 项规则接口挂载（权重一律经单源 w.*）
     assert "self.kick_reward_weights = KickRewardWeightsCfg()" in src
     for mount in (
         "self.rewards.goal_scored = RewTerm(func=mdp.goal_scored_reward, weight=w.goal_scored)",
@@ -1087,7 +1084,7 @@ def test_ball_env_cfg_task_only_rewards():
     # 调参零摩擦：sync 方法 + 挂载后同步在位
     assert "def sync_kick_reward_weights(self)" in src
     assert "self.sync_kick_reward_weights()" in src
-    # [X-HK3 F 臂] ball_distance 温度入单源：挂载 params + sync 同步面在案
+    # ball_distance 温度入单源：挂载 params + sync 同步面在案
     assert 'self.rewards.ball_distance.params["temperature"] = w.ball_distance_temperature' in src
     # 摔倒罚阈值与终止同源常量（单源 FALLEN_*；无裸数值第二处）
     assert src.count("mdp.FALLEN_GRAV_THRESHOLD") == 2  # 奖励 + 终止各一
@@ -1095,8 +1092,8 @@ def test_ball_env_cfg_task_only_rewards():
 
 
 def test_ball_env_cfg_kick_event_zero_default_mount():
-    """[X-HK2] kick_event 第 9 项：权重缺省 0.0（零行为影响红线）+ 挂载 +
-    sync 接入（D 臂经 --kick_rw_overrides 启用 0.5）。"""
+    """kick_event 第 9 项：权重缺省 0.0（零行为影响红线）+ 挂载 +
+    sync 接入（--kick_rw_overrides 可启用）。"""
     src = _kick_cfg_src()
     assert "kick_event: float = 0.0" in src
     assert "self.rewards.kick_event = RewTerm(func=mdp.kick_event_reward, weight=w.kick_event)" in src
@@ -1111,7 +1108,7 @@ def test_ball_env_cfg_terminations_and_episode():
     src = _kick_cfg_src()
     # root_height 显式置 None（被 robot_fallen 高度支 0.16 严格覆盖 0.15）
     assert "self.terminations.root_height = None" in src
-    # robot_fallen 双条件挂载（donor terminations.py:42 签名；阈值参数化）
+    # robot_fallen 双条件挂载（上游 terminations.py:42 签名；阈值参数化）
     assert "self.terminations.robot_fallen = DoneTerm(" in src
     assert "func=mdp.robot_fallen," in src
     assert '"grav_threshold": mdp.FALLEN_GRAV_THRESHOLD' in src
@@ -1156,7 +1153,7 @@ def test_ball_env_cfg_kick_policy_and_commands():
 
 
 def test_ball_env_cfg_kick_randomization_curriculum_by_default():
-    """[X-HK5] 随机化 + 距离轴课程缺省启用（owner 指令 2026-10-10）+ 狗固定
+    """随机化 + 距离轴课程缺省启用 + 狗固定
     spawn 零采样 + eval-only 覆写口字段在位。"""
     src = _kick_cfg_src()
     assert "self.kick_randomization = KickRandomizationCfg()" in src
@@ -1183,15 +1180,15 @@ def test_ball_env_cfg_oracle_face_restores_commands_and_obs():
     """Oracle 面：恢复 UniformVelocity 命令（heading off）+ UpperPolicyCfg 48 维。"""
     src = _kick_cfg_src()
     assert "class Go2KickFlatEnvCfgOracle(Go2KickFlatEnvCfg)" in src
-    assert "禁止用于三臂训练" in src  # 类注释红字
+    assert "禁止用于策略训练" in src  # 类注释红字
     assert "self.commands.base_velocity = mdp.UniformVelocityCommandCfg(" in src
     assert "heading_command=False" in src
     assert "self.observations.policy = UpperPolicyCfg()" in src
 
 
 def test_ball_env_cfg_ball_reset_event_wires_ball_write():
-    """球 reset 事件：func 单源 = mdp.reset_ball_root_state（[X-HK5] 移挂
-    ball_mdp 离线可测面）+ 写入链在位；旧 shaping 缓存清除钩子零残留
+    """球 reset 事件：func 单源 = mdp.reset_ball_root_state（ball_mdp 离线
+    可测面）+ 写入链在位；旧 shaping 缓存清除钩子零残留
     （防呆见 test_shaping_cache_face_removed_guards）。"""
     src = _kick_cfg_src()
     assert "self.events.reset_ball = EventTerm(" in src
@@ -1204,7 +1201,7 @@ def test_ball_env_cfg_ball_reset_event_wires_ball_write():
     assert "write_root_pose_to_sim" in mdp_src
     assert "write_root_velocity_to_sim" in mdp_src
     assert "ball.reset(" in mdp_src
-    assert "env_origins" in mdp_src  # env origin 偏移（donor reset.py:275 语义）
+    assert "env_origins" in mdp_src  # env origin 偏移（上游 reset.py:275 语义）
     assert "ball_spawn_d_max" in mdp_src and "ball_spawn_dist" in mdp_src \
         and "ball_spawn_xy" in mdp_src
 

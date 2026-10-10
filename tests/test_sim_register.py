@@ -6,7 +6,7 @@
 - §1.1 适配表常量（contracts = 单一真相源）逐通道 == 设计值；⚠️ 官方项
   参数（joint_vel U±1.5×0.01 / ang_vel scale1）不匹配设计值——防照抄锚。
 - flat_env_cfg 落地标记（isaaclab 面离线不可 import，源码标记 +
-  contracts 符号消费为落地证据；A100 sim 冒烟在 U2）。
+  contracts 符号消费为落地证据）。
 """
 from __future__ import annotations
 
@@ -30,8 +30,7 @@ _PKG = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(reg.__fil
 # 注册字符串面（U1-⑥）
 # --------------------------------------------------------------------------- #
 def test_register_strings_exact():
-    """任务 id / entry point 字符串 == 名称契约冻结值（cmd-only 拆分：
-    原 velocity/三臂/oracle/Seg 五 task id 随臂移除，仅存 cmd 面）。"""
+    """任务 id / entry point 字符串 == 名称契约冻结值（仅存 cmd 面）。"""
     assert reg.KICK_CMD_TASK_ID == "Isaac-Kick-Flat-Unitree-Go2-Upper-Cmd-v0"
     assert reg.KICK_CMD_TASK_ENTRY_POINT == "isaaclab.envs:ManagerBasedRLEnv"
     assert reg.KICK_CMD_ENV_CFG_ENTRY_POINT == (
@@ -109,7 +108,7 @@ def test_scale_vec_slot_order_and_values():
 
 
 # --------------------------------------------------------------------------- #
-# flat_env_cfg 落地标记（离线源码面；A100 sim 冒烟留 U2）
+# flat_env_cfg 落地标记（离线源码面）
 # --------------------------------------------------------------------------- #
 def test_flat_env_cfg_upper_markers():
     """适配 U1–U5 的落地证据（源码标记 + contracts 符号消费）。"""

@@ -1,4 +1,4 @@
-"""逐关节 action scale_vec（U0 §1.4：env 侧语义 scale 的规范值源）。
+"""逐关节 action scale_vec（env 侧语义 scale 的规范值源）。
 
 scale_j = SCALE_COEF(0.25) × effort_j / KP(40)，effort = URDF per-joint
 声明值（implicit 无显式 effort_limit 的回退真值，go2.yaml
@@ -6,8 +6,8 @@ scale_j = SCALE_COEF(0.25) × effort_j / KP(40)，effort = URDF per-joint
 knee 0.2839375。
 
 槽位序 = PhysX 序，单一真相源 ``robots/go2.py::GO2_JOINT_ORDER_IL``
-（按关节类型分组：hip×4, thigh×4, calf×4——go1 式关节序漂移的防线上，
-832854c 教训）。canonical 名 → URDF 名映射恒同 go2.yaml ``joint_map``
+（按关节类型分组：hip×4, thigh×4, calf×4——关节序漂移的防线）。
+canonical 名 → URDF 名映射恒同 go2.yaml ``joint_map``
 （abad→hip_joint / hip→thigh_joint / knee→calf_joint）。
 零 isaaclab：robots.go2 常量 + yaml 读值均可离线。
 """
@@ -75,7 +75,7 @@ def go2_joint_names_slot_order(yaml_path: str | None = None) -> list[str]:
 
 def init_std_vec(sigma_sem: float = 0.2,
                  yaml_path: str | None = None) -> torch.Tensor:
-    """pre-space 逐维探索 σ init = sigma_sem ⊘ scale_vec（§1.4 裁定）。"""
+    """pre-space 逐维探索 σ init = sigma_sem ⊘ scale_vec。"""
     return sigma_sem / go2_action_scale_vec(yaml_path)
 
 

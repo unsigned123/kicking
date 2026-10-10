@@ -1,21 +1,19 @@
 """官方口径 velocity-flat 训练入口（HK-Velocity-Flat-Unitree-Go2-v0）。
 
-冻结低层（arm D）官方口径 ckpt 的产出面：官方 go2 flat agents cfg
+冻结低层 official 口径 ckpt 的产出面：官方 go2 flat agents cfg
 （MLP[128,128,128] ELU、lr 1e-3 adaptive、300 it）+ 官方 48 维单帧 policy
 obs（sim/velocity_official_cfg.py 覆写回上游口径：joint_vel raw、单帧、
 动作均匀 0.5）。结构 = 官方 runner 模板（parse_env_cfg +
 RslRlVecEnvWrapper + OnPolicyRunner；kick 面 scripts/train.py 同款）。
 
-用法（dog env_isaaclab，包根目录）::
+用法（包根目录）::
 
     python hierarchical_kick/scripts/train_velocity.py \
         --num_envs 4096 --max_iterations 300
 
 产物：logs/rsl_rl/hk_velocity_flat_official/<date>_<run_name>/
 model_*.pt（终点 model_(N-1).pt → 拷入 hierarchical_kick/weights/
-velocity_flat_official/ 后为官方口径低层缺省资产；2026-10-09 起缺省
-资产 = model_walk.pt——rc1 runtime 修复后 1000it@4096env 重训，
-Mean reward 32.87 过行走门，替代站桩的 model_299.pt）。
+velocity_flat_official/ 后为官方口径低层缺省资产 model_walk.pt）。
 """
 from __future__ import annotations
 
@@ -151,7 +149,7 @@ def main() -> None:
     if set(joint_names) != set(GO2_JOINT_ORDER_IL):
         raise SystemExit(
             f"[hkick][velocity] env 关节集合漂移: {joint_names} != "
-            f"{list(GO2_JOINT_ORDER_IL)}（fail-fast；832854c 教训）")
+            f"{list(GO2_JOINT_ORDER_IL)}（fail-fast）")
     if joint_names != list(GO2_JOINT_ORDER_IL):
         print(f"[hkick][velocity][WARN] 关节序与 GO2_JOINT_ORDER_IL 有序差 "
               f"{joint_names} vs {list(GO2_JOINT_ORDER_IL)}")

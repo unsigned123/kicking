@@ -2,7 +2,7 @@
 
 仅覆盖 ``LatentDecoderRunner``（models/decoder_runner.py）离线 import 与
 构造所需：``__init__`` 存 env/cfg/device 属性（**不建 alg/logger**——
-learn 循环体不在本地测，A100 真身跑）。
+learn 循环体不在本地测，sim 侧真身跑）。
 """
 from __future__ import annotations
 

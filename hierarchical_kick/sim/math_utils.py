@@ -1,15 +1,11 @@
 """Pure-torch quaternion helpers（离线数学单源；ball_mdp 降级路径唯一消费方）。
 
-vendored from UT mdp/math_utils（standalone 纯 torch 实现，
-与 isaaclab.utils.math 的 ``quat_rotate_inverse`` 等价）；cmd-only 拆分时
-按依赖闭包收入本包——ball_mdp 的 isaaclab 绑定面不可用（离线/测试桩）时
-降级到本模块。
+standalone 纯 torch 实现，与 isaaclab.utils.math 的
+``quat_rotate_inverse`` 等价——ball_mdp 的 isaaclab 绑定面不可用
+（离线/测试桩）时降级到本模块。
 
-约定：quaternion 一律 xyzw（w 在末）。
-
-[isaaclab 3.0 迁移] 约定从 2.x wxyz 翻转为 3.x xyzw：数据层
-``.torch`` 视图与 isaaclab.utils.math 均已 xyzw，本离线单源同步翻转，
-保证 isaaclab 绑定面与离线降级面在全链同序。
+约定：quaternion 一律 xyzw（w 在末；数据层 ``.torch`` 视图与
+isaaclab.utils.math 同序，保证 isaaclab 绑定面与离线降级面全链同序）。
 """
 from __future__ import annotations
 

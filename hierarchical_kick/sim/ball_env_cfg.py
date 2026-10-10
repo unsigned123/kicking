@@ -4,58 +4,45 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ---------------------------------------------------------------------------
-# UPPER 自建（非 vendor）— hierarchical_kick.sim.ball_env_cfg
-#
-# U-Kick 球 env（docs/UKICK_BALL_ENV_DESIGN.md §3 规格、§7 拍板、§8-WP2 名称
-# 契约）：单 go2 + 单球 + 目标球门（解析判线，无门柱物理块），三臂对照共用
-# 训练面 Go2KickFlatEnvCfg；Go2KickFlatEnvCfgOracle 为 oracle/冒烟面（U4b B 臂
-# ckpt 直驱，**仅 oracle/冒烟用，禁止用于三臂训练**）。
+# hierarchical_kick.sim.ball_env_cfg — U-Kick 球 env 配置（自建，非 vendor）：
+# 单 go2 + 单球 + 目标球门（解析判线，无门柱物理块）。训练面
+# Go2KickFlatEnvCfg；Go2KickFlatEnvCfgOracle 为 oracle/冒烟面（冻结 velocity
+# ckpt 直驱，仅对照/冒烟用，禁止用于策略训练）。
 #
 # 继承链（零改动复用；本文件只做 kick 面追加/替换）：
 #   LocomotionVelocityRoughEnvCfg（velocity_env_cfg.py，vendor 只读）
 #     → UnitreeGo2FlatEnvCfg（flat_env_cfg.py，vendor+upper 只读）
 #     → Go2KickFlatEnvCfg（本文件）
 #
-# donor 移植（soccer_absolute @ master fc51c47，参考副本 /tmp/opencode/
-# ukick_donor/；只抄参数/公式/语义，零 import）：
-#   - 球物理全套      ← donor env/scene.py:215-247 逐值照抄（radius 0.11 /
-#                       mass 0.43 / μs 1.0 μd 0.95 / restitution 0.25 /
-#                       lin+ang damping 2.5「松脚即停」高阻尼）
-#   - 球侧接触传感器  ← donor env/scene.py:250-256（filter 表达式适配 ut go2
-#                       prim 布局：donor 为 4 机 17 体列表，ut 单狗收敛为
-#                       base + 4 足端——踢击检测（WP3 kick_count）所需的
-#                       保守 filter 面；base 命中兜底躯干触球）
-#   - 球 reset 写入   ← donor env/reset.py:257-280 语义（default_root_state +
-#                       env_origins → write_root_pose/velocity_to_sim → reset）
+# 球物理/传感器/reset 移植自上游 soccer_absolute 实现（只抄参数/公式/语义，
+# 零 import）：球物理全套 ← env/scene.py:215-247 逐值（radius 0.11 / mass
+# 0.43 / μs 1.0 μd 0.95 / restitution 0.25 / lin+ang damping 2.5「松脚即停」
+# 高阻尼）；球侧接触传感器 ← env/scene.py:250-256（filter 收敛为 base + 4
+# 足端——踢击检测所需的保守 filter 面，base 兜底躯干触球）；球 reset 写入 ←
+# env/reset.py:257-280 语义（default_root_state + env_origins → write → reset）。
 #
-# KICK 适配表（对 flat 链的全部 override，逐处标注）：
-#   K1) scene：+ 球 RigidObjectCfg（scene.ball）+ 球侧 ContactSensor
-#       （scene.ball_contact_forces）；terrain/光照/height_scanner=None 沿用继承链。
-#   K2) events：+ reset_ball（球 root state 写入；[X-HK5] func 移挂
-#       mdp.reset_ball_root_state——随机化/课程采样逻辑移入 ball_mdp 离线
-#       可测面）；reset_base 的 pose_range 钳零 —— 狗固定 spawn 零采样语义
-#       （owner 拍板 #3，保留 velocity_range=(0,0) 与 stand 姿态的现款零
-#       速度语义）；spawn 位姿常量面 [X-HK5]：狗 = mdp.DOG_SPAWN_XY=(0,0)
-#       （原点、进攻轴 +y）+ yaw=π/2（init_state 单源，rc1 default⊗delta
-#       语义下 reset 后稳定存活；owner 指令 2026-10-10——旧值门线前 0.3m
-#       为 [X-HK4 H 臂] 饱和布局，随 J 臂全任务域化移除）。
-#   K3) observations.policy → KickPolicyCfg（55 维 = 42-prefix 契约逐参不动
-#       ⊕ base_lin_vel 3 ⊕ ball_rel_b 3 ⊕ goal_rel_b 4 ⊕ push_geometry_b 3）。
-#   K4) commands.base_velocity = None（任务无 cmd 面）。
-#   K5) rewards task-only（owner 二次拍板 2026-09-30：奖励规则接口对齐
-#       soccer_absolute phase0——8 项公式面移植、权重按 go2 平台适配不照搬，
-#       权重单源 = KickRewardWeightsCfg（phase0 raw 对照列见其 docstring）；
-#       velocity track 系 + 全部 regularization 项仍显式 = None）：
-#       goal_scored / robot_fallen / survival / approach_ball / ball_distance /
-#       behind_ball / ball_progress（稠密项默认启用，取代旧 ε 预注册档）/
-#       ball_out_of_bounds；[X-HK2] 追加自建第 9 项 kick_event（缺省权重
-#       0.0 = 零行为影响，D 臂经 overrides 启用——非 phase0 面）。
-#   K6) terminations（phase0 active_terminations 对齐）：root_height(0.15)
-#       → robot_fallen（donor 双条件 grav>−0.5 ∨ body_z<0.16——高度支 0.16
-#       严格覆盖 0.15，见挂载注释）+ robot_out_of_field（工作区框，默认
-#       启用）+ goal_scored / ball_out（既有）+ time_out / base_contact
-#       （继承保留）；wall_stuck 接口在位不挂载（我方无墙）。
-#   K7) episode_length_s = 10.0（500 步 @50Hz；design §3.4）。
+# KICK 适配（对 flat 链的全部 override，逐处标注）：
+#   1) scene：+ 球 RigidObjectCfg（scene.ball）+ 球侧 ContactSensor
+#      （scene.ball_contact_forces）；terrain/光照/height_scanner=None 沿用继承链。
+#   2) events：+ reset_ball（func 单源 = mdp.reset_ball_root_state——随机化/
+#      课程采样逻辑移入 ball_mdp 离线可测面）；reset_base 的 pose_range 钳零
+#      —— 狗固定 spawn 零采样语义（保留 velocity_range=(0,0) 与 stand 姿态
+#      的现款零速度语义）；狗 spawn 常量面 = mdp.DOG_SPAWN_XY=(0,0)（原点、
+#      进攻轴 +y）+ yaw=π/2（init_state 单源，rc1 default⊗delta 语义下
+#      reset 后稳定存活）。
+#   3) observations.policy → KickPolicyCfg（55 维 = 42-prefix 契约逐参不动
+#      ⊕ base_lin_vel 3 ⊕ ball_rel_b 3 ⊕ goal_rel_b 4 ⊕ push_geometry_b 3）。
+#   4) commands.base_velocity = None（任务无 cmd 面）。
+#   5) rewards task-only：奖励规则接口公式面对齐 soccer_absolute——权重按
+#      go2 平台适配不照搬，权重单源 = KickRewardWeightsCfg（量纲理由见其
+#      docstring）；velocity track 系 + 全部 regularization 项仍显式 = None。
+#      挂载 8 项规则 + 自建第 9 项 kick_event（缺省权重 0.0 = 零行为影响）。
+#   6) terminations：root_height(0.15) → robot_fallen（双条件 grav>−0.5 ∨
+#      body_z<0.16——高度支 0.16 严格覆盖 0.15，见挂载注释）+
+#      robot_out_of_field（工作区框，默认启用）+ goal_scored / ball_out
+#      （既有）+ time_out / base_contact（继承保留）；wall_stuck 接口在位
+#      不挂载（无墙）。
+#   7) episode_length_s = 10.0（500 步 @50Hz）。
 # ---------------------------------------------------------------------------
 
 import math
@@ -92,13 +79,10 @@ from hierarchical_kick.sim.mdp.frozen_loco_action import (
 )
 
 ##
-# [X-HK4 H 臂 → X-HK5 J 臂] spawn 常量面
-#
-# [X-HK5]（owner 指令 2026-10-10）：狗 spawn 原点 (0,0)、yaw=π/2 固定
-# （常量单源 = mdp.DOG_SPAWN_XY）；球出生随机化 + 距离轴课程（dist ~
-# U[d_min, d_max(t)]，见 KickRandomizationCfg / mdp.ball_spawn_* 单源）。
-# 本文件仅存 enabled=False 固定 spawn 逃逸口的 init_state 常量（旧 H 臂
-# 饱和布局：球门线前 0.2m）。
+# spawn 常量面：狗 spawn 原点 (0,0)、yaw=π/2 固定（常量单源 = mdp.DOG_SPAWN_XY）；
+# 球出生随机化 + 距离轴课程（dist ~ U[d_min, d_max(t)]，见 KickRandomizationCfg /
+# mdp.ball_spawn_* 单源）。本文件仅存 enabled=False 固定 spawn 逃逸口的
+# init_state 常量（门线前 0.2m）。
 ##
 
 
@@ -110,36 +94,33 @@ reset 后逐位回到。"""
 
 BALL_SPAWN_XY = (0.0, mdp.GOAL_Y - 0.2)
 """球固定 spawn（env 系 xy；kick_randomization.enabled=False 逃逸口）：
-门线前 0.2m（GOAL_Y=3.0 → y=2.8）。[X-HK4 H 臂] 饱和布局原值——J 臂起
-缺省走随机化 + 课程（enabled=True），本常量仅供 A/B 与调试面。"""
+门线前 0.2m（GOAL_Y=3.0 → y=2.8）。缺省 enabled=True 走随机化 + 课程，
+本常量仅供 A/B 与调试面。"""
 
 
 ##
-# 随机化 + 距离轴课程 cfg（[X-HK5]；纯 python 数据类，不依赖 isaaclab——
-# 采样/调度逻辑单源在 mdp.ball_spawn_* / mdp.reset_ball_root_state）
+# 随机化 + 距离轴课程 cfg（纯 python 数据类，不依赖 isaaclab——采样/调度
+# 逻辑单源在 mdp.ball_spawn_* / mdp.reset_ball_root_state）
 ##
 
 
 @dataclass
 class KickRewardWeightsCfg:
-    """U-Kick 奖励权重单源（owner 二次拍板 2026-09-30：phase0 规则接口对齐 +
-    go2 平台适配，**权重不照搬**）。
+    """U-Kick 奖励权重单源（公式面按上游 soccer_absolute 规则接口对齐 +
+    go2 平台适配，**权重不照搬**；全仓库唯一权重定义点）。
 
-    phase0 raw 列 = donor config/phases/phase0_solo.yaml reward_weights（其
-    平台 cyberdog2、全局 reward_scale=0.1、episode 3750 步全场赛制——raw 权重
-    不可直接搬，先对公式面再调参）。我方适配列量纲理由（go2 站高 0.227 /
-    门距 3m / 500 步 @50Hz / 无全局 reward_scale）：
+    量纲理由（go2 站高 0.227 / 门距 3m / 500 步 @50Hz / 无全局 reward_scale）：
 
-    | 项                      | phase0 raw | 我方默认 | 量纲理由 |
-    |-------------------------|-----------|---------|---------|
-    | goal_scored             | 500.0     | +10.0   | 保持现值；稀疏主奖励（进球即终止单次） |
-    | robot_fallen            | 30.0      | −5.0    | 一次性 mask；≈半个 goal 的痛感（phase0 等效 30×0.1=3，同量级） |
-    | survival                | 0.02      | +0.25   | 保持现值 β1（flat U5）；fall penalty 在场后仍提供"活下去的底薪"（500 步全存活 = 125 ≈ 12.5 个 goal——底薪大于痛感，但摔即失全额生存流，结构性反摔） |
-    | approach_ball_velocity  | 0.15      | +0.15   | phase0 同值起步；投影速度量纲 m/s × coeff 1.0、cap max_speed 0.5 → 单步 ≤0.075 |
-    | ball_distance           | 0.03      | +0.05   | exp 核 ∈(0,1] 无量纲、3m 域全程底薪引导（≈survival 的 20%） |
-    | behind_ball             | 0.03      | +0.05   | exp 核 × donor scale 0.35 → 单步 ≤0.0175，弱位形先验不与主引导抢幅值 |
-    | ball_progress           | 0.0（旧 tier2 ε） | +0.10 | Δy 差分 × donor scale 5：0.5m/s 球速@50Hz → 单步 0.005、全程 3m 推进 ≈1.5（goal 的 15%，owner 点名启用） |
-    | ball_out_of_bounds      | 10.0      | −2.0    | 步 mask 罚；≈8 步正项流水等价（phase0 等效 10×0.1=1，同量级偏严防胡踢） |
+    | 项                      | 默认 | 量纲理由 |
+    |-------------------------|---------|---------|
+    | goal_scored             | +10.0   | 稀疏主奖励（进球即终止单次） |
+    | robot_fallen            | −5.0    | 一次性 mask；≈半个 goal 的痛感 |
+    | survival                | +0.25   | β1；fall penalty 在场后仍提供"活下去的底薪"（500 步全存活 = 125 ≈ 12.5 个 goal——底薪大于痛感，但摔即失全额生存流，结构性反摔） |
+    | approach_ball_velocity  | +0.15   | 投影速度量纲 m/s × coeff 1.0、cap max_speed 0.5 → 单步 ≤0.075 |
+    | ball_distance           | +0.05   | exp 核 ∈(0,1] 无量纲、3m 域全程底薪引导（≈survival 的 20%） |
+    | behind_ball             | +0.05   | exp 核 × scale 0.35 → 单步 ≤0.0175，弱位形先验不与主引导抢幅值 |
+    | ball_progress           | +0.10   | Δy 差分 × scale 5：0.5m/s 球速@50Hz → 单步 0.005、全程 3m 推进 ≈1.5（goal 的 15%） |
+    | ball_out_of_bounds      | −2.0    | 步 mask 罚；≈8 步正项流水等价（偏严防胡踢） |
 
     调参零摩擦（单点改法，任选其一）：
       A) 代码默认：改本数据类字段默认值（全仓库唯一权重定义点）；
@@ -151,7 +132,7 @@ class KickRewardWeightsCfg:
       C) yaml 桥（预留）：训练 yaml 加 ``reward_weights: {字段: 值}`` 段后由
          run_upper 构造期填 kick_reward_weights 再 sync（字段面已冻结，接线
          属调参期）。
-    kernel 形参（max_dist/temperature/coeff 等）= donor 语义默认，见
+    kernel 形参（max_dist/temperature/coeff 等）= 上游语义默认，见
     ball_mdp 各 wrapper 签名，可经 ``RewTerm(params={...})`` 覆写。
     """
 
@@ -160,34 +141,32 @@ class KickRewardWeightsCfg:
     survival: float = 0.25
     approach_ball_velocity: float = 0.15
     ball_distance: float = 0.05
-    # [X-HK3 F 臂] ball_distance exp 核温度（核宽）入单源：缺省 2.0 = donor
-    # 语义默认（基线逐位不变）；F 臂经 --kick_rw_overrides 降到 0.5 陡化核
-    # （1.0m/0.5m/0.2m 核值 0.135/0.368/0.670，全程增益 ~53/集 vs T=2 的 ~7.4）
+    # ball_distance exp 核温度（核宽）入单源：缺省 2.0 = 上游语义默认
+    # （基线逐位不变）；可经 --kick_rw_overrides 调小陡化核
     ball_distance_temperature: float = 2.0
     behind_ball: float = 0.05
     ball_progress: float = 0.10
     ball_out_of_bounds: float = -2.0
-    # [X-HK2] 踢击事件回报（自建过程引导项，非 phase0 面）：接触力范数
-    # >0.1N 判踢 + 0.5s/25 步冷却，1.0 mask × weight = 事件回报幅值。
-    # **缺省 0.0 = 零行为影响**（红线纪律：基线面默认无此项贡献；D 臂经
+    # 踢击事件回报（自建过程引导项）：接触力范数 >0.1N 判踢 + 0.5s/25 步
+    # 冷却，1.0 mask × weight = 事件回报幅值。
+    # **缺省 0.0 = 零行为影响**（红线纪律：基线面默认无此项贡献；经
     # --kick_rw_overrides '{"kick_event": 0.5, ...}' 启用）
     kick_event: float = 0.0
 
 
 @dataclass
 class KickRandomizationCfg:
-    """kick 面 spawn 随机化 + 距离轴课程（[X-HK5] owner 指令 2026-10-10）。
+    """kick 面 spawn 随机化 + 距离轴课程。
 
-    enabled=True（**缺省，J 臂起**）：reset_ball 事件（mdp.
+    enabled=True（**缺省**）：reset_ball 事件（mdp.
     reset_ball_root_state 单源）把球出生位整体覆写为狗 spawn 前方采样位：
       - dist ~ U[d_min, d_max(t)]：距离轴随机化本身就是课程——d_max(t) =
         0.5 + (d_max_final−0.5)×clamp(common_step_counter/warmup_steps, 0, 1)
         （mdp.ball_spawn_d_max 单源；warmup_steps = warmup_iters ×
-        steps_per_iter）。steps_per_iter 口径 = 本栈实测 24 步/it
+        steps_per_iter）。steps_per_iter 口径 = 24 步/it
         （common_step_counter 每 env.step +1、rollout num_steps_per_env=24）
-        → warmup_iters=500 处恰满域（规格"500it 处到满域"；规格文字
-        "250 步/it" 为口径笔误，实测见 manager_based_rl_env.py:249）；
-      - 横向 x ~ U(±ball_xy_range[0])（缺省 ±0.3，design §3.1 档；y 通道
+        → warmup_iters=500 处恰满域（口径见 manager_based_rl_env.py:249）；
+      - 横向 x ~ U(±ball_xy_range[0])（缺省 ±0.3；y 通道
         不消费——y 轴由 dist 承载）；
       - y clamp ≤ GOAL_Y − 0.2（mdp.CURRICULUM_Y_MARGIN，防 reset 即在
         门内假 goal）。
@@ -195,33 +174,33 @@ class KickRandomizationCfg:
     ball_dist_override：eval-only 球距覆写（eval_kick.py --ball_dist 单一口），
     非 None 时 dist 轴取常量、跳过采样（横向仍采样）——球距响应扫描用。
     enabled=False 且无 override：完全固定 spawn BALL_SPAWN_XY（init_state
-    单源；旧 H 臂饱和布局逃逸口）。狗恒固定 spawn mdp.DOG_SPAWN_XY +
+    单源）。狗恒固定 spawn mdp.DOG_SPAWN_XY +
     yaw=π/2（不随机；init_state 单源 + reset_base pose_range 钳零）。
-    dog_yaw_range：预留字段（pilot 期接线后再消费；当前实现不驱动狗位姿）。
+    dog_yaw_range：预留字段（接线后再消费；当前实现不驱动狗位姿）。
     """
 
     enabled: bool = True
     ball_xy_range: tuple[float, float] = (0.3, 0.0)
     dog_yaw_range: tuple[float, float] = (-math.pi, math.pi)
-    # [X-HK5] 距离轴课程（规格公式字段化）
+    # 距离轴课程（规格公式字段化）
     curriculum_enabled: bool = True
     warmup_iters: int = 500
     steps_per_iter: float = 24.0
     d_min: float = 0.1
     d_max_final: float = 2.7
-    # [X-HK5] eval-only 球距覆写（None = 不覆写；eval_kick.py --ball_dist）
+    # eval-only 球距覆写（None = 不覆写；eval_kick.py --ball_dist）
     ball_dist_override: float | None = None
 
 
 ##
 # reset 事件（isaaclab 面）：reset_ball func 单源 = mdp.reset_ball_root_state
-# （[X-HK5] 移入 ball_mdp——随机化/课程采样逻辑离线可测；挂载见
+# （随机化/课程采样逻辑在 ball_mdp——离线可测；挂载见
 # Go2KickFlatEnvCfg.__post_init__ 的 events.reset_ball）
 ##
 
 
 ##
-# obs 组（55 维 kick 契约；K3）
+# obs 组（55 维 kick 契约）
 ##
 
 
@@ -233,13 +212,13 @@ class KickPolicyCfg(ObsGroup):
     （噪声/scale 原样，joint_pos/joint_vel/base_ang_vel/projected_gravity/
     actions = 42 维 decoder proprio 契约，绝不再加第二噪声源）；尾部追加
     base_lin_vel 3 ⊕ ball_rel_b 3 ⊕ goal_rel_b 4 ⊕ push_geometry_b 3。
-    单帧无 history（与 upper 现栈一致，不抄 donor obs history buffer）。
+    单帧无 history（与 upper 现栈一致，不引入 obs history buffer）。
     """
 
     # -- decoder proprio 42（首 term；逐参 = UpperPolicyCfg，契约切片不动） --
     # [表#1] joint_pos (0:12)：U±0.01，scale 1.0
     joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-NOISE_JOINT_POS, n_max=NOISE_JOINT_POS))
-    # [表#2] joint_vel (12:24)：U±0.5 × scale 0.05（V6 契约；官方项不照抄）
+    # [表#2] joint_vel (12:24)：U±0.5 × scale 0.05（decoder 契约；官方项不照抄）
     joint_vel = ObsTerm(
         func=mdp.joint_vel_rel,
         noise=Unoise(n_min=-NOISE_JOINT_VEL, n_max=NOISE_JOINT_VEL),
@@ -261,12 +240,12 @@ class KickPolicyCfg(ObsGroup):
     # -- 策略面 + kick 几何（42:55） --
     # [表#6] base_lin_vel (42:45)：U±0.1（与 UpperPolicyCfg 同参）
     base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-NOISE_BASE_LIN_VEL, n_max=NOISE_BASE_LIN_VEL))
-    # [表#8] ball_rel_b (45:48)：body 系 xy/3 + 距离/3（donor observations.py:73-79）
+    # [表#8] ball_rel_b (45:48)：body 系 xy/3 + 距离/3（上游 observations.py:73-79）
     ball_rel_b = ObsTerm(func=mdp.ball_rel_b)
-    # [表#9] goal_rel_b (48:52)：body 系 xy/3 + sin + cos（donor observations.py:81-88）
+    # [表#9] goal_rel_b (48:52)：body 系 xy/3 + sin + cos（上游 observations.py:81-88）
     goal_rel_b = ObsTerm(func=mdp.goal_rel_b)
     # [表#10] push_geometry_b (52:55)：cos_behind + fwd-vs-btog sin/cos
-    #         （donor observations.py:205-235）
+    #         （上游 observations.py:205-235）
     push_geometry_b = ObsTerm(func=mdp.push_geometry_b)
 
     def __post_init__(self):
@@ -275,19 +254,17 @@ class KickPolicyCfg(ObsGroup):
 
 
 ##
-# 训练面（三臂共用）
+# 训练面
 ##
 
 
 @configclass
 class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
-    """U-Kick 球 env 训练面（任务 Isaac-Kick-Flat-Unitree-Go2-Upper-v0）。
+    """U-Kick 球 env 训练面。
 
-    官方 flat 谱系 + KICK 适配 K1–K7（文件头表）；奖励 = phase0 规则接口
-    8 项（owner 二次拍板 2026-09-30：公式语义对齐 soccer_absolute phase0、
-    权重按 go2 平台适配，单源 KickRewardWeightsCfg；叙事："奖励/终止配方
-    结构对齐前人 phase0，权重按我方平台适配，唯一变量是动作接口"——三臂
-    逐位同奖励，公平性不变）。obs/终止/球物理三臂逐位同。
+    官方 flat 谱系 + KICK 适配 1–7（文件头表）；奖励规则接口公式面对齐
+    soccer_absolute、权重按 go2 平台适配，单源 KickRewardWeightsCfg。
+    obs/终止/球物理全部继承链逐位同。
     """
 
     def __post_init__(self):
@@ -295,64 +272,61 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
         # root_height 终止、survival 项等）
         super().__post_init__()
 
-        # [K1] 球场景（donor scene.py:215-247 逐值照抄 + provenance 行内注；
-        #      init_state pos = 固定 spawn BALL_SPAWN_XY=(0, GOAL_Y−0.2, 0.11)
-        #      ——[X-HK5] 起 enabled=True 缺省走随机化 + 课程，此 init_state
-        #      仅是 enabled=False 逃逸口的常量面（旧值 (0.3, 0, 0.11) 为
-        #      X-HK3 G 臂贴脚）
+        # [1] 球场景（scene.py:215-247 逐值；init_state pos = 固定 spawn
+        #      BALL_SPAWN_XY=(0, GOAL_Y−0.2, 0.11)——enabled=True 缺省走随机化
+        #      + 课程时此 init_state 仅作 default_root_state 底板（xy 被采样
+        #      覆写，z=0.11 沿用）
         self.scene.ball = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Ball",
             spawn=sim_utils.SphereCfg(
-                radius=0.11,  # 球半径（donor scene.py:218，对齐 cyberdog2_rl）
-                # visual_material=donor 同款 PreviewSurfaceCfg（白色）——
-                # **headless 不挂**：A100 缺 libXt/libGLU 时 preview 材质
-                # spawn 死旋（flat_env_cfg.py 头 U6 同型实测；录像阶段在
-                # 带 --enable_cameras 的会话内再启用）
-                # 物理材质（donor scene.py:223-227）
+                radius=0.11,  # 球半径（scene.py:218，对齐 cyberdog2_rl）
+                # visual_material 同上游 PreviewSurfaceCfg（白色）——
+                # **headless 不挂**：缺 libXt/libGLU 的会话 preview 材质
+                # spawn 死旋（录像阶段在带 --enable_cameras 的会话内再启用）
+                # 物理材质（scene.py:223-227）
                 physics_material=sim_utils.RigidBodyMaterialCfg(
                     static_friction=1.0,
                     dynamic_friction=0.95,
                     restitution=0.25,
                 ),
-                # 碰撞属性（donor scene.py:229-231）
+                # 碰撞属性（scene.py:229-231）
                 collision_props=sim_utils.CollisionPropertiesCfg(
                     collision_enabled=True,
                 ),
-                # 刚体属性（donor scene.py:233-237；高阻尼「松脚即停」）
+                # 刚体属性（scene.py:233-237；高阻尼「松脚即停」）
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=False,
                     linear_damping=2.5,
                     angular_damping=2.5,
                 ),
-                # 质量属性（donor scene.py:238-240）
+                # 质量属性（scene.py:238-240）
                 mass_props=sim_utils.MassPropertiesCfg(
                     mass=0.43,
                 ),
                 activate_contact_sensors=True,
             ),
             init_state=RigidObjectCfg.InitialStateCfg(
-                # [X-HK5] 球固定 spawn 逃逸口常量面（BALL_SPAWN_XY 门线前
-                # 0.2m，H 臂饱和布局）——缺省 enabled=True 时此值仅作
-                # default_root_state 底板（xy 被 reset_ball 采样整体覆写，
-                # z=0.11 沿用）。⚠️ 已知前案（X-HK3 G 臂裁定）：0.1m 处球面
-                # （r0.11 表面延伸进机体）与狗前腿初始穿透、PhysX 解算弹飞
-                # ——随机化下 dist ∈ [0.1, ·] 仍含贴脚档，若首 iter 出现
-                # goal 假信号/球飞优先归因于此（弹飞朝 +y = 瞬间过门线假
-                # goal；ball_progress 首步重播种对 spawn 跳变免疫）。
+                # 球固定 spawn 逃逸口常量面（BALL_SPAWN_XY 门线前 0.2m）——
+                # 缺省 enabled=True 时此值仅作 default_root_state 底板。
+                # ⚠️ 贴脚档注意：dist 下限 0.1m 处球面（r0.11 表面延伸进
+                # 机体）与狗前腿初始穿透、PhysX 解算弹飞——随机化下
+                # dist ∈ [0.1, ·] 仍含贴脚档，若首 iter 出现 goal 假信号/
+                # 球飞优先归因于此（弹飞朝 +y = 瞬间过门线假 goal；
+                # ball_progress 首步重播种对 spawn 跳变免疫）。
                 pos=(BALL_SPAWN_XY[0], BALL_SPAWN_XY[1], 0.11),
                 rot=(0.0, 0.0, 0.0, 1.0),  # 无旋转（xyzw 单位元；isaaclab 3.0 通道序）
             ),
         )
-        # [K1] 球侧接触传感器（donor scene.py:250-256 语义；filter 表达式适配
-        #      ut go2 prim 布局：donor 4 机 17 体列表 → ut 单狗 base + 4 足端
-        #      的保守 filter 面——足端主踢击检测 + base 兜底躯干触球；WP3
-        #      kick_count（Lake 指标）消费本传感器）
+        # [1] 球侧接触传感器（scene.py:250-256 语义；filter 表达式适配
+        #      go2 prim 布局：上游 4 机 17 体列表 → 本包单狗 base + 4 足端
+        #      的保守 filter 面——足端主踢击检测 + base 兜底躯干触球；
+        #      kick_count 指标消费本传感器）
         self.scene.ball_contact_forces = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Ball",
             update_period=0.0,
             history_length=20,
             # filter 显式枚举（单源 GO2_FOOT_BODIES；**不用 .* 通配**——
-            # env_*/Robot/.*_foot 在 10 env 下匹配 40 prim 触发 tensor API
+            # env_*/Robot/.*_foot 在多 env 下跨 env 匹配翻倍触发 tensor API
             # expected/found 警告且力矩阵形状漂移；显式名逐 env 恰 5 prim）
             filter_prim_paths_expr=[
                 "{ENV_REGEX_NS}/Robot/base",
@@ -360,32 +334,31 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
             ],
         )
 
-        # [K2] 随机化 + 距离轴课程挂载（[X-HK5] owner 指令 2026-10-10：
-        #      enabled=True 缺省——球出生狗前方 dist ~ U[d_min, d_max(t)] +
-        #      横向 U(±0.3)，课程调度面 = mdp.ball_spawn_d_max 单源）
+        # [2] 随机化 + 距离轴课程挂载（enabled=True 缺省——球出生狗前方
+        #      dist ~ U[d_min, d_max(t)] + 横向 U(±0.3)，课程调度面 =
+        #      mdp.ball_spawn_d_max 单源）
         self.kick_randomization = KickRandomizationCfg()
 
-        # [X-HK5] 狗 spawn 常量面（owner 指令 2026-10-10）：原点 (0,0)、
-        #      yaw=π/2 面朝球门（常量单源 = mdp.DOG_SPAWN_XY；旧 [X-HK4 H 臂]
-        #      门线前 0.3m 饱和位随全任务域化移除）。实现走 init_state 单源
-        #      （spawn z 沿用 profile 现款，不硬编码）：rc1
-        #      reset_root_state_uniform = default ⊗ delta、本链 pose_range
-        #      钳零（delta=identity）→ 每次 reset 后位姿逐位回到本值，yaw
-        #      稳定存活；下方 reset_base 零采样语义保持（狗固定 spawn）。
+        #      狗 spawn 常量面：原点 (0,0)、yaw=π/2 面朝球门（常量单源 =
+        #      mdp.DOG_SPAWN_XY）。实现走 init_state 单源（spawn z 沿用
+        #      profile 现款，不硬编码）：rc1 reset_root_state_uniform =
+        #      default ⊗ delta、本链 pose_range 钳零（delta=identity）→
+        #      每次 reset 后位姿逐位回到本值，yaw 稳定存活；下方 reset_base
+        #      零采样语义保持（狗固定 spawn）。
         _dog_init = self.scene.robot.init_state
         _dog_init.pos = (mdp.DOG_SPAWN_XY[0], mdp.DOG_SPAWN_XY[1],
                          float(_dog_init.pos[2]))
         _dog_init.rot = DOG_SPAWN_YAW_QUAT_XYZW
 
-        # [K2] 狗固定 spawn 零采样（owner 拍板 #3；velocity_range 已由
-        #      flat 链钳零 = 现款零速度语义；stand 姿态经 joint reset 继承）
+        # [2] 狗固定 spawn 零采样（velocity_range 已由 flat 链钳零 = 现款
+        #      零速度语义；stand 姿态经 joint reset 继承）
         self.events.reset_base.params["pose_range"] = {
             "x": (0.0, 0.0),
             "y": (0.0, 0.0),
             "yaw": (0.0, 0.0),
         }
-        # [K2] 球 reset 事件（写入 root state；[X-HK5] func 单源 =
-        #      mdp.reset_ball_root_state——随机化/课程采样逻辑在 ball_mdp，
+        # [2] 球 reset 事件（写入 root state；func 单源 = mdp.
+        #      reset_ball_root_state——随机化/课程采样逻辑在 ball_mdp，
         #      离线可测；ball_progress_dense 缓存由 wrapper"每集首步重播种"
         #      对 reset 跳变免疫，随机 spawn 下正是其发挥作用的面）
         self.events.reset_ball = EventTerm(
@@ -394,14 +367,14 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
             params={"asset_cfg": SceneEntityCfg("ball")},
         )
 
-        # [K3] obs 组替换（55 维 kick 契约；42-prefix 逐参不动）
+        # [3] obs 组替换（55 维 kick 契约；42-prefix 逐参不动）
         self.observations.policy = KickPolicyCfg()
 
-        # [K4] 无命令面（任务无 cmd；KickPolicyCfg 无 velocity_commands 项，
+        # [4] 无命令面（任务无 cmd；KickPolicyCfg 无 velocity_commands 项，
         #      悬空引用不存在）
         self.commands.base_velocity = None
 
-        # [K5] 奖励 task-only（owner 二次拍板 2026-09-30）——velocity track 系 +
+        # [5] 奖励 task-only——velocity track 系 +
         #      regularization 全部显式置 None（真实字段名逐项在位）：
         self.rewards.track_lin_vel_xy_exp = None
         self.rewards.track_ang_vel_z_exp = None
@@ -414,38 +387,38 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
         self.rewards.action_rate_l2 = None
         self.rewards.undesired_contacts = None  # rough 链已 None；显式幂等在位
         self.rewards.dof_pos_limits = None
-        # 权重单源（KickRewardWeightsCfg；phase0 raw 对照表见类 docstring）
+        # 权重单源（KickRewardWeightsCfg；量纲理由表见类 docstring）
         self.kick_reward_weights = KickRewardWeightsCfg()
         w = self.kick_reward_weights
-        # —— phase0 规则接口 8 项（公式面移植 provenance 见 ball_mdp 头）——
+        # —— 规则接口 8 项（公式面 provenance 见 ball_mdp 头）——
         # 进球稀疏主奖励（幅值由 weight 承载；goal_scored 即终止，无重复触发）
         self.rewards.goal_scored = RewTerm(func=mdp.goal_scored_reward, weight=w.goal_scored)
         # 摔倒罚：状态直检 1.0 mask（奖励先于终止计算，不依赖 termination
-        # manager；donor rewards.py:37 单狗化）；阈值与 robot_fallen 终止同源
+        # manager；上游 rewards.py:37 单狗化）；阈值与 robot_fallen 终止同源
         self.rewards.robot_fallen = RewTerm(
             func=mdp.robot_fallen_penalty, weight=w.robot_fallen,
             params={"grav_threshold": mdp.FALLEN_GRAV_THRESHOLD,
                     "body_z_threshold": mdp.FALLEN_BODY_Z_THRESHOLD})
-        # survival（恒 +1.0 × β1）显式挂载（继承 flat U5 的 value 语义不变，
+        # survival（恒 +1.0 × β1）显式挂载（继承 flat 链 value 语义不变，
         # 权重入单源；fall penalty 在场后仍提供活下去的底薪）
         self.rewards.survival = RewTerm(func=mdp.alive_reward, weight=w.survival)
-        # 稠密引导族（owner 拍板：默认启用；kernel 形参 = ball_mdp 签名默认，
+        # 稠密引导族（默认启用；kernel 形参 = ball_mdp 签名默认，
         # 可经 RewTerm(params={...}) 覆写）
         self.rewards.approach_ball = RewTerm(func=mdp.approach_ball_velocity_reward, weight=w.approach_ball_velocity)
         self.rewards.ball_distance = RewTerm(func=mdp.ball_distance_reward, weight=w.ball_distance, params={"temperature": w.ball_distance_temperature})
         self.rewards.behind_ball = RewTerm(func=mdp.behind_ball_reward, weight=w.behind_ball)
-        # 球向门 Δy 进攻方向差分（donor ball_progress_dense；替换旧
+        # 球向门 Δy 进攻方向差分（上游 ball_progress_dense；替换旧
         # ball_progress_shaping ε 预注册档——其 prev-cur 距离缓存及 reset
         # 钩子已整体移除，ball_progress 自带缓存对 reset 跳变免疫）
         self.rewards.ball_progress = RewTerm(func=mdp.ball_progress_dense, weight=w.ball_progress)
-        # [X-HK2] 踢击事件回报（自建项，非 phase0；检测面 = kick_metrics
+        # 踢击事件回报（自建项；检测面 = kick_metrics
         # 单源。缺省 weight 0.0 → 挂载但零贡献——基线行为面逐位不变）
         self.rewards.kick_event = RewTerm(func=mdp.kick_event_reward, weight=w.kick_event)
         # 球出界步 mask 罚（复用 ball_out 半径判据）
         self.rewards.ball_out_of_bounds = RewTerm(func=mdp.ball_out_of_bounds_penalty, weight=w.ball_out_of_bounds)
 
-        # [K6] 终止（phase0 active_terminations 对齐）：
-        #  - robot_fallen 替换继承 root_height(0.15)：donor 双条件
+        # [6] 终止：
+        #  - robot_fallen 替换继承 root_height(0.15)：双条件
         #    （proj_grav_z > −0.5 —— 站立 ≈−1，倾斜超 ~60°；或 base 高 <
         #    0.16m —— go2 站高 0.227，余量 0.067m ≈ 30% 站高，蹲伏步态波谷
         #    不误杀、瘫倒/侧翻必触发）。高度支 0.16 **严格覆盖** root_height
@@ -458,13 +431,13 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
                     "body_z_threshold": mdp.FALLEN_BODY_Z_THRESHOLD})
         #  - robot_out_of_field：机器人工作区框（env 系相对逐 env origin；
         #    默认启用——单狗无墙球会滚远，球逃逸由 ball_out 处置，机器人本身
-        #    不该为追球跑出工作区；donor 场界矩形判据 → 我方任务域非对称框）
+        #    不该为追球跑出工作区；上游场界矩形判据 → 本包任务域非对称框）
         self.terminations.robot_out_of_field = DoneTerm(
             func=mdp.robot_out_of_field,
             params={"x_min": mdp.ROBOT_FIELD_X_MIN, "x_max": mdp.ROBOT_FIELD_X_MAX,
                     "y_min": mdp.ROBOT_FIELD_Y_MIN, "y_max": mdp.ROBOT_FIELD_Y_MAX})
-        #  - wall_stuck 接口在位**不挂载**（我方无墙；mdp.wall_stuck 备用，
-        #    donor dist+speed 双条件，引入场地墙段后再挂）
+        #  - wall_stuck 接口在位**不挂载**（无墙；mdp.wall_stuck 备用，
+        #    上游 dist+speed 双条件，引入场地墙段后再挂）
         #  - goal_scored / ball_out（既有）+ time_out / base_contact（继承；
         #    base_contact 与 robot_fallen 互补：贴地躯干触地即终止，兜底
         #    双条件判据覆盖不到的接触形态，如腹部擦地倾斜角未超阈值瞬间）
@@ -475,7 +448,7 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
         # 后再调本方法，或直接改 rewards.<term>.weight——幂等）
         self.sync_kick_reward_weights()
 
-        # [K7] episode 时长 10s（500 步 @50Hz；design §3.4）
+        # [7] episode 时长 10s（500 步 @50Hz）
         self.episode_length_s = 10.0
 
     def sync_kick_reward_weights(self) -> None:
@@ -501,7 +474,7 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
 
 
 ##
-# oracle / 冒烟面（U4b B 臂 ckpt 直驱；WP4 验收门用）
+# oracle / 冒烟面（冻结 velocity ckpt 直驱；验收门用）
 ##
 
 
@@ -509,11 +482,11 @@ class Go2KickFlatEnvCfg(UnitreeGo2FlatEnvCfg):
 class Go2KickFlatEnvCfgOracle(Go2KickFlatEnvCfg):
     """oracle 面：48 维 velocity 契约 + 命令管理器在位（teacher 直写 cmd）。
 
-    ⚠️ 仅 oracle/冒烟用，禁止用于三臂训练。U4b B 臂 policy 的 obs 契约 =
-    proprio 42 ⊕ base_lin_vel 3 ⊕ cmd 3（48 维），命令管理器每步由 scripted
-    teacher（WP4：几何状态机）直写 command buffer；球场景/终止/奖励与训练面
-    （Go2KickFlatEnvCfg）逐位同 —— oracle 链：teacher 几何 → 速度命令 [vx,vy,ωz]
-    → U4b B 臂 ckpt → 关节动作（design §4 验收门：10 episode ≥3 进球、零摔）。
+    ⚠️ 仅 oracle/冒烟评测用，禁止用于策略训练。冻结 velocity policy 的
+    obs 契约 = proprio 42 ⊕ base_lin_vel 3 ⊕ cmd 3（48 维），命令管理器每步
+    由 scripted teacher（几何状态机）直写 command buffer；球场景/终止/奖励与
+    训练面（Go2KickFlatEnvCfg）逐位同 —— oracle 链：teacher 几何 → 速度命令
+    [vx,vy,ωz] → 冻结 ckpt → 关节动作（验收门：10 episode ≥3 进球、零摔）。
     """
 
     def __post_init__(self):
@@ -539,24 +512,24 @@ class Go2KickFlatEnvCfgOracle(Go2KickFlatEnvCfg):
 
 
 ##
-# arm D「真分层」面（U4b B 臂 ckpt 冻结低层 + 3 维速度命令高层）
+# cmd「真分层」面（冻结低层 ckpt + 3 维速度命令高层）
 ##
 
 
 @configclass
 class KickPolicyCfgCmd(KickPolicyCfg):
-    """arm D 高层 obs 组（55 维契约保持；仅 actions 项换源）。
+    """cmd 高层 obs 组（55 维契约保持；仅 actions 项换源）。
 
     唯一 diff（对照 :class:`KickPolicyCfg`）：``actions`` 项从
-    ``mdp.last_action``（= action_manager.action，arm D 下是 3 维命令）换成
+    ``mdp.last_action``（= action_manager.action，cmd 面下是 3 维命令）换成
     :func:`low_level_last_action_obs`（冻结低层上一步 12 维 pre-scale 输出）
-    ——42-prefix 通道序/维数与三臂逐位同构（55 = 42+3+3+4+3），通道语义
+    ——42-prefix 通道序/维数与训练面逐位同构（55 = 42+3+3+4+3），通道语义
     同为「关节级 last action」。其余项（joint_pos/joint_vel/base_ang_vel/
     projected_gravity/base_lin_vel/ball_rel_b/goal_rel_b/push_geometry_b）
     **零改动继承**（噪声/缩放逐参同源）；奖励/终止不在本类——继承训练面。
     """
 
-    # [表#5] last_action (30:42)：无噪声；arm D 语义 = 冻结低层上一步输出
+    # [表#5] last_action (30:42)：无噪声；cmd 面语义 = 冻结低层上一步输出
     #        （3 维命令动作不进本通道——见 frozen_loco_action.
     #        low_level_last_action_obs docstring）
     actions = ObsTerm(func=low_level_last_action_obs)
@@ -567,14 +540,14 @@ class KickPolicyCfgCmd(KickPolicyCfg):
 
 @configclass
 class Go2KickFlatEnvCfgCommand(Go2KickFlatEnvCfg):
-    """arm D「真分层」面（任务 Isaac-Kick-Flat-Unitree-Go2-Upper-Cmd-v0）。
+    """cmd「真分层」面（任务 Isaac-Kick-Flat-Unitree-Go2-Upper-Cmd-v0）。
 
-    与三臂训练面（Go2KickFlatEnvCfg）的**全部差异只在动作接口**：
+    与训练面（Go2KickFlatEnvCfg）的**全部差异只在动作接口**：
       - ``actions.joint_pos`` → :class:`FrozenLocoJointPositionActionCfg`
         （3 维 [vx,vy,wz] 命令 → 写命令 buffer → 冻结低层 → 12
         关节位置目标；低层约定缺省 official = 官方 velocity-flat 口径
         （weights/velocity_flat_official/model_walk.pt，均匀 0.5 动作
-        scale），--low_level_convention legacy 切旧 U4b B 臂
+        scale），--low_level_convention legacy 切旧契约
         model_2999.pt + 逐关节 scale_vec；ckpt 路径 launch 期填充，
         构造期存在性 fail-fast）；
       - ``commands.base_velocity`` 恢复（照 :class:`Go2KickFlatEnvCfgOracle`
@@ -582,9 +555,8 @@ class Go2KickFlatEnvCfgCommand(Go2KickFlatEnvCfg):
         值不消费；resample 竞争分析见 frozen_loco_action 模块头）；
       - ``observations.policy`` → :class:`KickPolicyCfgCmd`（仅 actions 项
         换低层 last_action，55 维契约保持）。
-    obs 尾部（ball/goal/push）/奖励（phase0 8 项）/终止（phase0 集）/球
-    物理/PPO 面全部继承训练面**零改动**——三臂公平性纪律。
-    ⚠️ 仅供 arm D（--actor command）；三臂训练禁用本面。
+    obs 尾部（ball/goal/push）/奖励（8 项）/终止/球
+    物理/PPO 面全部继承训练面**零改动**。
     """
 
     def __post_init__(self):
@@ -610,7 +582,7 @@ class Go2KickFlatEnvCfgCommand(Go2KickFlatEnvCfg):
         # （官方 velocity-flat 口径；--low_level_convention 可切 legacy）：
         #   - official：均匀 0.5 动作 scale（scale dict 不消费，占位 legacy 面）
         #     + ckpt 缺省 weights/velocity_flat_official/model_walk.pt；
-        #   - legacy：逐关节 scale_vec（单源表）+ U4b B model_2999.pt。
+        #   - legacy：逐关节 scale_vec（单源表）+ legacy ckpt model_2999.pt。
         # ckpt 路径留空 = 按约定缺省（run_upper launch 期经 --low_level_ckpt
         # 填绝对路径，构造期存在性 fail-fast）
         self.actions.joint_pos = FrozenLocoJointPositionActionCfg(

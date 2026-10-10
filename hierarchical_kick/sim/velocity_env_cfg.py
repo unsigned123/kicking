@@ -11,10 +11,9 @@
 # 原文：isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/velocity/velocity_env_cfg.py
 #
 # 相对官方原文的全部 diff（逐处；其余逐字符 verbatim）：
-#   D1) mdp 导入面：
-#       官方 ``from hierarchical_kick.sim import mdp``
+#   D1) mdp 导入面：官方 locomotion velocity mdp 导入
 #    -> ``from hierarchical_kick.sim import mdp``
-#       （A100 stripped fork 无 locomotion 包；upper.sim.mdp 核心 re-export
+#       （本包 fork 无 locomotion 包；hierarchical_kick.sim.mdp 核心 re-export
 #       isaaclab.envs.mdp + vendor 的 terrain_levels_vel / feet_air_time /
 #       feet_slide + upper 自建 func——见 mdp/__init__.py 头注）
 #   D2) 文件头追加本 vendor 块（版权/来源/diff 记录），正文自

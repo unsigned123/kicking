@@ -12,12 +12,12 @@
 #
 # vendor 理由：vendored velocity_env_cfg.py 的 CurriculumCfg 在 import 期引用
 # ``mdp.terrain_levels_vel``（类体求值），不 vendor 该符号则 base cfg 无法
-# 导入（A100 stripped fork 无 locomotion 包可回退）。函数 verbatim 零 diff。
+# 导入（本包 fork 无 locomotion 包可回退）。函数 verbatim 零 diff。
 # 上层 flat 环境运行期不用地形课程（flat_env_cfg 置 terrain_levels=None）。
 #
 # 非 vendor：velocity mdp/terminations.py 的 terrain_out_of_bounds（flat/plane
-# 不需要）——velocity 包 vendor 清单 = rewards(2) + curriculums(1)，见本包
-# __init__ 头注与 DEVIATIONS.md U1 段。
+# 不需要）——velocity 包 vendor 清单 = rewards(2) + curriculums(1)，
+# 见本包 __init__ 头注。
 # ---------------------------------------------------------------------------
 
 """Common functions that can be used to create curriculum for the learning environment.

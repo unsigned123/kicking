@@ -1,15 +1,14 @@
 # ---------------------------------------------------------------------------
 # UPPER 自建（非 vendor）— hierarchical_kick.core.kick_metrics
 #
-# U-Kick kick 模式指标（docs/UKICK_BALL_ENV_DESIGN.md §5 Lake 指标扩展 +
-# §8-WP3「kick 模式 audit 列」）：KickMetricsTracker 每 rollout 步从 env 读
+# U-Kick kick 模式指标（audit 列面）：KickMetricsTracker 每 rollout 步从 env 读
 # 球 root pos/lin_vel、robot root pos、``env.scene.ball_contact_forces``
 # 接触力，按 env 累积 per-episode 量，episode 结束帧（done；进球判据读
 # ``env.termination_manager``，退化路径为 ball_mdp 解析判线复算）聚合：
 #   - ball_disp      球位移 = 末态 − 初态（水平 xy 范数；episode 首帧锚定）
 #   - max_ball_speed 球线速度批内逐步最大（3 维全量范数）
 #   - kick_count     踢击事件计数 = 球侧接触力范数 > 0.1N 的步数
-#                    （donor soccer_env.py:334-341 阈值 0.1 同款思想）
+#                    （上游 soccer_env.py:334-341 阈值 0.1 同款思想）
 #   - behind_frac    cos_behind > 0 帧占比（复用 ball_mdp 纯函数
 #                    _push_geometry_b_impl 第 0 列——单一实现源）
 #   - goal           episode 结束帧 goal_scored 判据真值
@@ -19,7 +18,7 @@
 #
 # 零 isaaclab：env 取数全 duck-typing（scene 字典 + data 属性 + 可选
 # termination_manager），离线 fake env 直测纯逻辑。ball_mdp 复用面经守卫式
-# 双路加载（A100 正常 import；离线父包 __init__ 拉 isaaclab → 按路径加载，
+# 双路加载（sim 正常 import；离线父包 __init__ 拉 isaaclab → 按路径加载，
 # test_upper_kick_env 同款降级）。
 # ---------------------------------------------------------------------------
 
@@ -34,7 +33,7 @@ from collections import deque
 import torch
 
 KICK_FORCE_THRESHOLD_N = 0.1
-"""踢击事件接触力阈值（donor soccer_env.py:334-341 的 0.1 同款，单位 N）。"""
+"""踢击事件接触力阈值（上游 soccer_env.py:334-341 的 0.1 同款，单位 N）。"""
 
 KICK_WINDOW_DEFAULT = 100
 """audit 行滚动窗口 episode 数（10s/500 步 episode 下平滑 ~每 21 it 一批
@@ -78,7 +77,7 @@ if int(getattr(_BMDP, "KICK_OBS_DIM", -1)) != KICK_POLICY_OBS_DIM:
         f"[upper][ukick] KICK obs 维 mirror 漂移: kick_metrics."
         f"{KICK_POLICY_OBS_DIM} != ball_mdp.{getattr(_BMDP, 'KICK_OBS_DIM', None)}")
 
-# [X-HK2] kick_event 奖励签名默认阈值 mirror 交叉断言（单一实现源防漂移
+# kick_event 奖励签名默认阈值 mirror 交叉断言（单一实现源防漂移
 # ——ball_mdp.kick_event_reward 的 force_threshold 缺省必须 = 本模块
 # KICK_FORCE_THRESHOLD_N；KICK_OBS_DIM mirror 同款机制）。
 _kick_evt_fn = getattr(_BMDP, "kick_event_reward", None)
@@ -164,7 +163,7 @@ class KickMetricsTracker:
         """球侧传感器 robot↔ball 接触力 → 每 env 最大合范数 (N,)。
 
         主路径 = filter 面 ``force_matrix_w`` (N, B, F, 3)——只含 robot
-        filter 体对球的力（WP2 ball_contact_forces filter=base+四足端）；
+        filter 体对球的力（ball_contact_forces filter=base+四足端）；
         ``net_forces_w`` 含地面反力（静止 ~4.2N ≫ 0.1N，必假触发），禁用
         ——无 filter 数据时 fail-fast 指路。
         """

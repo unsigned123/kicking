@@ -1,17 +1,13 @@
 # ---------------------------------------------------------------------------
-# UPPER 自建（非 vendor）— hierarchical_kick.core.low_level_actor
+# hierarchical_kick.core.low_level_actor — 冻结低层 actor 单源构造与 ckpt
+# 装载（零 isaaclab）。唯一消费方 = env 侧冻结动作 term
+# （sim/mdp/frozen_loco_action.py）。
 #
-# 冻结低层（U4b B 臂）actor 单源构造与 ckpt 装载（零 isaaclab）。
-#
-# 【cmd-only 拆分闭包注】本文件由 UT 源树的 core/direct_actor.py
-# （e2e 直出基线 UpperDirectActor 类本体）+ core/play_actor.py（构造
-# kwargs 推导 + ckpt 装载入口）合并而来——cmd-only 包里二者唯一的消费方
-# 是 env 侧冻结动作 term（sim/mdp/frozen_loco_action.py），故收拢为
-# 单文件。语义逐位
-# 同源：构造期守卫 / σ_sem⊘scale_vec 逐维 std / ckpt 键面兼容（rsl_rl
-# 5.1.0 ``actor_state_dict`` 分离存面 + 旧 ``model_state_dict`` 合一面）。
+# 契约：构造期守卫 fail-fast / σ_sem⊘scale_vec 逐维 std / ckpt 键面兼容
+# （rsl_rl 5.1.0 ``actor_state_dict`` 分离存面 + 旧 ``model_state_dict``
+# 合一面）。rsl_rl 模型面离线经 tests/fakes/rsl_rl 桩直测。
 # ---------------------------------------------------------------------------
-"""Frozen low-level (U4b B-arm) actor: single-source construction + ckpt load.
+"""Frozen low-level actor: single-source construction + ckpt load.
 
 零 isaaclab：rsl_rl 模型面（离线经 tests/fakes/rsl_rl 桩）。
 """
@@ -41,8 +37,8 @@ UnitreeGo2FlatPPORunnerCfg.policy.actor_hidden_dims；ckpt 侧从 state_dict
 def resolve_actor_state_dict(ckpt, *, device=None) -> tuple[dict, dict]:
     """ckpt（路径或已 load 的 dict）→ (完整 dict, actor state_dict)。
 
-    键面兼容：rsl_rl 5.1.0 分离存面（``actor_state_dict``，官方 train 与
-    U4b 实测金样同面）与旧合一面（``model_state_dict``）；其余键面
+    键面兼容：rsl_rl 5.1.0 分离存面（``actor_state_dict``，官方 train
+    存面）与旧合一面（``model_state_dict``）；其余键面
     fail-fast KeyError。零装载（纯解析面——结构校验/装载分步走）。
     """
     if isinstance(ckpt, (str, os.PathLike)):
@@ -100,8 +96,8 @@ class UpperDirectActor(MLPModel):
     """冻结低层 π_direct：policy obs（契约参数化）── MLP[128,128,128] ELU
     ──► mean12 ──► Gaussian(12)。
 
-    U4 B 臂直出形态（MLP 直出 12 关节 pre-scale 偏移；velocity 面 obs 48 /
-    kick 面 55）。本包内仅作**冻结低层**消费（frozen_loco_action 构造期
+    MLP 直出 12 关节 pre-scale 偏移（velocity 面 obs 48 / kick 面 55）。
+    本包内仅作**冻结低层**消费（frozen_loco_action 构造期
     装载 + 冻结三件套），不作为可训上层 actor。
     """
 
@@ -130,7 +126,7 @@ class UpperDirectActor(MLPModel):
         # cfg 显式传 ball_mdp.KICK_OBS_DIM=55）
         self.obs_dim_contract = int(obs_dim_contract)
         self._guards(obs_set, obs_normalization, output_dim)
-        # 逐维探索 σ init = σ_sem ⊘ scale_vec（§1.4；与上层 actor 构造期
+        # 逐维探索 σ init = σ_sem ⊘ scale_vec（与上层 actor 构造期
         # 同一表达式——PhysX 槽位序，abad/hip ≈1.3503 / knee ≈0.7044）
         scale_vec = go2_action_scale_vec()
         self.register_buffer("action_scale_vec", scale_vec,
@@ -155,7 +151,7 @@ class UpperDirectActor(MLPModel):
         # 2) obs_normalization 恒 False（同 obs 面，无双归一）
         if obs_normalization:
             raise ValueError(
-                "[upper] obs_normalization 必须 False（U4 同 obs 面）")
+                "[upper] obs_normalization 必须 False（同 obs 面）")
         # 3) 分布必须 12 维 Gaussian 且 output_dim == 动作维
         if not isinstance(self.distribution, GaussianDistribution):
             raise ValueError(

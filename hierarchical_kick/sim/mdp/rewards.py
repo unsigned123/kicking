@@ -10,8 +10,7 @@
 #      （commit 3c6e67bb5c7ada942a6d1884ab69338f57596f77）
 # 原文：isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/velocity/mdp/rewards.py
 #
-# vendor 范围（U0_UPPER_DESIGN §0.2 移植裁定：velocity 包非核心 mdp 函数
-# 仅两个）：
+# vendor 范围（velocity 包非核心 mdp 函数仅两个）：
 #   - feet_air_time   — 官方原文逐字符 verbatim，零 diff；
 #   - feet_slide      — 官方原文逐字符 verbatim，零 diff。
 # 其余 velocity 包函数（feet_air_time_positive_biped /
@@ -20,8 +19,8 @@
 # stand_still 在 isaaclab.envs.mdp 核心/dog 私改面）。
 #
 # UPPER 自建（非 vendor，与本上游无关）：
-#   - alive_reward    — §1.5 survival 项 RewardTermCfg(func=..., weight=β1)
-#                       的恒 +1.0 func（V4 latent_survival 同形态）。
+#   - alive_reward    — survival 项 RewardTermCfg(func=..., weight=β1)
+#                       的恒 +1.0 func。
 # ---------------------------------------------------------------------------
 
 """Common functions that can be used to define rewards for the learning environment.

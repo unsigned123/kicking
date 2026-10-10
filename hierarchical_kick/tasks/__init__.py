@@ -1,12 +1,8 @@
-"""上层任务 gym 注册（官方字符串懒加载模板；U0 §4 工程结构）。
+"""上层任务 gym 注册（官方字符串懒加载模板）。
 
-[cmd-only 拆分] 原 UT upper/sim/register 的五个 task id
-（velocity 面 / kick 三臂原面 / oracle 面 / ours Seg 面）随 ours/e2e 臂
-拆分移除；仅保留 arm D「真分层」cmd 面，task id 字符串**冻结不变**
-（与 UT 同环境共存会有重复注册警告，可接受）。
-
-注册模块零 eager 导入：entry point 全为字符串，cfg 类只在 entry point
-解析时拉起。训练入口 ``hierarchical_kick/scripts/train.py`` 顶部显式
+task id 字符串**冻结不变**。注册模块零 eager 导入：entry point 全为
+字符串，cfg 类只在 entry point 解析时拉起。训练入口
+``hierarchical_kick/scripts/train.py`` 顶部显式
 ``import hierarchical_kick.tasks`` 拉起。
 
 无 gymnasium/isaaclab 的离线环境：静默跳过（try/except ImportError；
@@ -16,20 +12,20 @@ from __future__ import annotations
 
 # 注册字符串面（模块常量 = 离线测试的契约锚；勿内联进 gym.register 调用）
 KICK_CMD_TASK_ID = "Isaac-Kick-Flat-Unitree-Go2-Upper-Cmd-v0"
-"""kick arm D 任务 id（真分层面 Go2KickFlatEnvCfgCommand）。"""
+"""kick cmd 任务 id（真分层面 Go2KickFlatEnvCfgCommand）。"""
 
 KICK_CMD_TASK_ENTRY_POINT = "isaaclab.envs:ManagerBasedRLEnv"
 """env entry point（官方 ManagerBasedRLEnv 面，与官方 velocity 任务同）。"""
 
 KICK_CMD_ENV_CFG_ENTRY_POINT = (
     "hierarchical_kick.sim.ball_env_cfg:Go2KickFlatEnvCfgCommand")
-"""kick arm D 面 env cfg entry point（字符串懒加载）。"""
+"""kick cmd 面 env cfg entry point（字符串懒加载）。"""
 
 KICK_CMD_RSL_RL_CFG_ENTRY_POINT = (
     "hierarchical_kick.agents:UpperKickCmdPPORunnerCfg")
-"""kick arm D 面 rsl_rl cfg entry point（UpperKickCmdPPORunnerCfg，3 维命令 actor）。"""
+"""kick cmd 面 rsl_rl cfg entry point（UpperKickCmdPPORunnerCfg，3 维命令 actor）。"""
 
-# -- 官方 velocity-flat 训练面（官方口径低层 ckpt 的产出面；2026-10-09） --
+# -- 官方 velocity-flat 训练面（官方口径低层 ckpt 的产出面） --
 HK_VELOCITY_TASK_ID = "HK-Velocity-Flat-Unitree-Go2-v0"
 """官方口径 velocity-flat 任务 id（fork UnitreeGo2FlatEnvCfg 覆写回上游口径）。"""
 
@@ -68,7 +64,7 @@ try:
         },
     )
 except (ImportError, ModuleNotFoundError):
-    # 离线（无 gymnasium）静默跳过：注册字符串面常量仍可消费（U1-⑥）
+    # 离线（无 gymnasium）静默跳过：注册字符串面常量仍可消费
     pass
 
 __all__ = [

@@ -1,5 +1,4 @@
-"""U-Kick arm D「真分层」对照 — 离线判据（docs/UKICK_BALL_ENV_DESIGN.md §0
-谱系扩展 + 任务书 B 部分）。
+"""U-Kick cmd「真分层」面 — 离线判据。
 
 - frozen_loco_math 纯函数（按路径加载，ball_mdp 同款降级）：低层 48 维 obs
   组装逐通道 == contracts.py §1.1 适配表（offset/scale 单源）；关节目标公式
@@ -14,8 +13,7 @@
   命令面 + 动作项替换 + obs 55 不动（奖励/终止零改动）；register 常量；
   UpperKickCmdPPORunnerCfg 最小子类公平性；run_upper --actor command 双向
   守卫 + --low_level_ckpt 路径注入（md5/provenance 面已随 v1.0 剥离移除）。
-- 公平性：arm D runner cfg 与三 kick runner cfg 除 actor/experiment_name
-  外逐字等；UpperCmdActorCfg 与 UpperDirectActorCfg 共享字段逐字同 AST。
+- 公平性：cmd runner cfg 与基类除 actor/experiment_name 外逐字等；UpperCmdActorCfg 与 UpperDirectActorCfg 共享字段逐字同 AST。
 
 离线（无 isaaclab）：ball_env_cfg/frozen_loco_action 不可 import → 源码/AST
 面；core 模块（cmd_actor/frozen_loco_math）经 fakes/rsl_rl 桩或按路径加载
@@ -30,12 +28,8 @@ import os
 import pytest
 import torch
 
-from hierarchical_kick.core.cmd_actor import (
-    CMD_ACTION_DIM, UPPER_CMD_ACTOR_CLASS_PATH, UpperCmdActor)
-from hierarchical_kick.core.contracts import (
-    OFF_BASE_ANG_VEL, OFF_JOINT_POS, OFF_JOINT_VEL, OFF_LAST_ACTION,
-    OFF_PROJ_GRAVITY, PROPRIO_DIM, SCALE_BASE_ANG_VEL, SCALE_JOINT_VEL,
-    SIGMA_SEM)
+from hierarchical_kick.core.cmd_actor import (CMD_ACTION_DIM, UpperCmdActor)
+from hierarchical_kick.core.contracts import SIGMA_SEM
 from hierarchical_kick.core.scale_vec import go2_action_scale_vec
 
 _TEST_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,7 +119,7 @@ def test_assemble_low_level_obs_channel_order_matches_contracts():
 
 
 def test_assemble_low_level_obs_legacy_branch_layout():
-    """legacy 分支（旧 U4b B 臂 48 布局）保持逐位不变（joint_vel ×0.05 /
+    """legacy 分支（旧契约 48 布局）保持逐位不变（joint_vel ×0.05 /
     ang_vel ×0.2 适配表；proprio42 前缀 + linvel + cmd）。"""
     from hierarchical_kick.core.contracts import (
         OFF_BASE_ANG_VEL, OFF_JOINT_POS, OFF_JOINT_VEL, OFF_LAST_ACTION,
@@ -284,7 +278,7 @@ def test_frozen_action_term_source_contract():
     # reset 语义：raw 命令 + 低层 last_action 清零
     assert "self._raw_actions[env_ids] = 0.0" in src
     assert "self._low_last_action[env_ids] = 0.0" in src
-    # 类型注解纪律（ball_env_cfg NameError 教训）：env 注解加引号 +
+    # 类型注解纪律（configclass 注解求值早于 env 初始化）：env 注解加引号 +
     # TYPE_CHECKING import ManagerBasedRLEnv
     assert "'ManagerBasedRLEnv'" in src
     assert "if TYPE_CHECKING:" in src
@@ -295,11 +289,10 @@ def test_frozen_action_term_source_contract():
 
 
 def test_frozen_action_no_time_abstraction_note():
-    """docstring 钉死 50Hz 逐步命令（无时间抽象/action repeat）+ U33 审计注。"""
+    """docstring 钉死 50Hz 逐步命令（无时间抽象/action repeat）。"""
     src = _source(_FROZEN_ACTION_PATH)
     assert "50Hz" in src
     assert "无时间抽象" in src
-    assert "U33" in src
     assert "action repeat" in src or "5 步 hold" in src
 
 
@@ -417,7 +410,7 @@ def _raw_assigns(source: str, cls: str) -> dict:
 
 
 def test_cmd_runner_cfg_is_min_subclass_fair_with_three_arms():
-    """arm D runner cfg 与三 kick runner cfg 公平性：同一基类最小子类，仅
+    """cmd runner cfg 公平性：同一基类最小子类，仅
     experiment_name/actor 两处差异（PPO 超参/obs_groups/critic/clip_actions
     逐字继承）+ 臂名 upper_ukick_cmd + actor = UpperCmdActorCfg()。"""
     src = _source(_AGENTS_PATH)
@@ -429,19 +422,18 @@ def test_cmd_runner_cfg_is_min_subclass_fair_with_three_arms():
     raw = _raw_assigns(src, "UpperKickCmdPPORunnerCfg")
     assert raw["experiment_name"] == repr("upper_ukick_cmd")
     assert raw["actor"] == "UpperCmdActorCfg()"
-    # [cmd-only 拆分] e2e/hier/ours runner cfg 已随臂移除——公平性锚改为
-    # 基类逐字同源断言（PPO 超参/obs_groups/clip_actions/critic 全在基类，
-    # UT 三臂本就逐字继承同一基类）。
+    # 公平性锚：基类逐字同源断言（PPO 超参/obs_groups/clip_actions/critic
+    # 全在基类，仅 experiment_name/actor 为子类自有）。
+    # e2e/hier/ours runner cfg 不存在（仅 cmd 面）。
     for cls in ("UpperKickE2EPPORunnerCfg", "UpperKickHierPPORunnerCfg",
                 "UpperKickOursPPORunnerCfg"):
         assert cls not in bodies, cls
 
 
 def test_cmd_actor_cfg_field_face():
-    """UpperCmdActorCfg 字段面（同 trunk/同探索/同 obs 面；UT 三臂同源值）。
+    """UpperCmdActorCfg 字段面（同 trunk/同探索/同 obs 面）。
 
-    [cmd-only 拆分] 原 UpperDirectActorCfg 对比锚随 e2e 臂移除——共享字段
-    值改为字面锚（值与 UT 三臂逐字同源：hidden_dims [128,128,128] ELU /
+    共享字段值为字面锚（hidden_dims [128,128,128] ELU /
     σ_sem 分布 / obs 契约缺省 55）。
     """
     src = _source(_AGENTS_PATH)
@@ -453,7 +445,7 @@ def test_cmd_actor_cfg_field_face():
     assert raw["activation"] == repr("elu")
     assert raw["obs_normalization"] == "False"
     assert raw["sigma_sem"] == "SIGMA_SEM"
-    # obs 契约缺省面：arm D 恒 kick 55
+    # obs 契约缺省面：cmd 面恒 kick 55
     assert raw["obs_dim_contract"] == "KICK_POLICY_OBS_DIM"
     # 无 decoder/z/k_env 面（上层无冻结资产消费）
     assert set(c_assigns) == {"class_name", "hidden_dims", "activation",
@@ -471,11 +463,10 @@ def test_cmd_actor_cfg_field_face():
 
 def test_train_command_actor_wiring():
     """train.py cmd-only 面：task 守卫（先于 AppLauncher）+ stock runner +
-    低层 ckpt 路径注入 + 存在性守卫（--actor 分支随三臂拆分移除）。"""
+    低层 ckpt 路径注入 + 存在性守卫（无 --actor 分支）。"""
     src = _source(_RUN_UPPER_PATH)
     ast.parse(src)
-    # [cmd-only] 无 --actor argparse 分支（docstring 裁剪注提及不算）；
-    # task 守卫指向 cmd 面
+    # 无 --actor argparse 分支；task 守卫指向 cmd 面
     assert 'add_argument("--actor"' not in src
     assert "KICK_CMD_TASK_ID" in src
     assert "仅支持 cmd 任务 id" in src
@@ -487,20 +478,20 @@ def test_train_command_actor_wiring():
     assert "--low_level_ckpt" in src
     assert "env_cfg.actions.joint_pos.low_level_ckpt_path" in src
     assert "低层 ckpt 不存在" in src
-    # ours/e2e 专属 CLI 面零残留（argparse 面；docstring 裁剪注提及不算）
+    # ours/e2e 专属 CLI 面零残留（argparse 面）
     for gone in ("--decoder_ckpt", "--sfeasible_ckpt", "--u31_config",
                  "--pca-k", "--cmd_support_box"):
         assert f'add_argument("{gone}"' not in src, gone
-    # stock rsl_rl runner（cmd 臂下 UT UpperRunner 附加面全短路）
+    # stock rsl_rl runner
     assert "from rsl_rl.runners import OnPolicyRunner" in src
     assert "OnPolicyRunner(" in src
-    # kick 面 PPO 配方单源（entropy 0.001，原 upper_ukick.yaml 值内联）
+    # kick 面 PPO 配方单源（entropy 0.001）
     assert "ENTROPY_COEF = 0.001" in src
     assert "agent_cfg.algorithm.entropy_coef = ENTROPY_COEF" in src
 
 
 def test_xhk2_ppo_knobs_and_eval_stochastic_source():
-    """[X-HK2] PPO 旋钮 + eval stochastic 旗标源码面：train.py
+    """PPO 旋钮 + eval stochastic 旗标源码面：train.py
     --num_steps_per_env/--gamma 实例级覆写（类定义不动）+ PPO 面核对打印；
     eval_kick.py --stochastic 随机采样口径 + 固定 seed 臂间可比。"""
     tsrc = _source(_RUN_UPPER_PATH)
@@ -512,7 +503,7 @@ def test_xhk2_ppo_knobs_and_eval_stochastic_source():
     assert "agent_cfg.num_steps_per_env = int(args_cli.num_steps_per_env)" in tsrc
     assert "agent_cfg.algorithm.gamma = float(args_cli.gamma)" in tsrc
     # 启动日志 PPO 面核对行（num_steps/gamma/entropy/survival/权重表锚）
-    assert "[hkick][X-HK2] 最终 PPO 面" in tsrc
+    assert "[hkick] 最终 PPO 面" in tsrc
     assert "num_steps_per_env=" in tsrc and "gamma=" in tsrc
     # eval 仪器：--stochastic 随机采样 + 固定 seed
     esrc = _source(os.path.join(_PKG_ROOT, "hierarchical_kick", "scripts",

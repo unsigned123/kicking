@@ -14,7 +14,7 @@ None = 无规范层，语义不变）：
     action 分发三处共用的锚点序；
   - ``joint_to_canonical`` / ``canonical_to_joint``: 本体关节名 ↔ 规范关节名
     的双向映射（ embodiments yaml 的 joint_map 展开产物；按名置换，方向
-    断言见 tests/test_m23_embodiments.py，R5 教训）。
+    断言见消费方单测）。
 
 字段语义（与 data_collect 完全一致）：
   - joint_order: Isaac Lab 实际关节序（PhysX 按关节类型分组）

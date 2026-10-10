@@ -13,39 +13,38 @@
 # 原文 B：同目录 flat_env_cfg.py            （→ UnitreeGo2FlatEnvCfg 谱系）
 #
 # ## VENDOR 段 diff（UnitreeGo2RoughEnvCfg 相对官方原文 A；逐处） ##
-#   D2) import 面：官方 ``isaaclab_tasks.manager_based.locomotion.velocity.
+#   2) import 面：官方 ``isaaclab_tasks.manager_based.locomotion.velocity.
 #       velocity_env_cfg`` → 本包 ``hierarchical_kick.sim.
 #       velocity_env_cfg``（stripped fork 无 locomotion 包）。
-#   D3) robot：官方 ``UNITREE_GO2_CFG.replace(prim_path=...)``（DCMotor
-#       0.5/0.5）→ ut tracking 装配单源 ``make_go2_track_profile()``
+#   3) robot：官方 ``UNITREE_GO2_CFG.replace(prim_path=...)``（DCMotor
+#       0.5/0.5）→ tracking 装配单源 ``make_go2_track_profile()``
 #       （ImplicitActuator 40/1 无 effort_limit、spawn 0.42、stance
-#       thigh0.9/calf-1.8——V6 decoder 的物理契约；design §3）+ 补挂
+#       thigh0.9/calf-1.8——decoder 物理契约）+ 补挂
 #       ``soft_joint_pos_limit_factor=0.9``（go2.yaml 契约值；单本体工厂
-#       缺省 1.0，multi/embodiments 装配为 0.9——对齐 V6 训练装配）。
+#       缺省 1.0，multi/embodiments 装配为 0.9——对齐 decoder 训练装配）。
 #   其余（terrain 缩放 / push_robot=None / add_base_mass(-1,3) /
 #   base_com=None / reset_base 零速度 / reset_robot_joints(1,1) /
 #   feet_air_time ".*_foot" / undesired_contacts=None / dof_torques -2e-4 /
 #   track 1.5/0.75 / dof_acc -2.5e-7 / base_contact=base）= 官方原文逐行。
 #
 # ## UnitreeGo2FlatEnvCfg = 官方原文 B 逐行，仅一处 diff：
-#   D4) ``self.observations.policy.height_scan = None`` 行删（UPPER 层
+#   4) ``self.observations.policy.height_scan = None`` 行删（UPPER 层
 #      observations 整组替换为 UpperObservationsCfg——无 height_scan 项，
 #      对不存在属性置 None 会 AttributeError；语义已由整组替换覆盖）。
 #
-# ## UPPER 适配层（Go2UpperFlatEnvCfg；U0_UPPER_DESIGN §1.1/§1.4/§1.5/§3，
-#    每处标注设计依据） ##
-#   U1) obs 整组替换：官方 48+height_scan 组 → 48 维单帧 policy 组
+# ## UPPER 适配层（Go2UpperFlatEnvCfg） ##
+#   1) obs 整组替换：官方 48+height_scan 组 → 48 维单帧 policy 组
 #       （decoder proprio 42 ⊕ base_lin_vel 3 ⊕ cmd 3；逐通道参数 =
 #       core/contracts 适配表，⚠️ 官方 velocity 项参数不照抄处见注释）。
-#   U2) actions.joint_pos.scale：官方标量 0.25 → 逐关节 dict
-#       （scale_j = 0.25×effort_j/KP；§1.4 V6 训练语义零变换差）。
-#   U3) commands：heading_command=False（§7-3 裁定；官方 True）。
-#   U4) terminations：+ root_height(0.15)（官方 flat 仅 time_out +
-#       base_contact；fall_height 0.15 对齐，dog 0.2 误杀教训）。
-#   U5) rewards：+ survival（恒+1.0，weight=β1=0.25；§1.5）。
-#   U6) commands.base_velocity.debug_vis=False（vendor 保真原文 True 不动；
-#       A100 headless 材质系统缺 libXt/libGLU → goal marker preview
-#       surface spawn 死旋，实发 U2 首验暴露——可视化与训练语义无关）。
+#   2) actions.joint_pos.scale：官方标量 0.25 → 逐关节 dict
+#       （scale_j = 0.25×effort_j/KP；decoder 训练语义零变换差）。
+#   3) commands：heading_command=False（官方 True）。
+#   4) terminations：+ root_height(0.15)（官方 flat 仅 time_out +
+#       base_contact；fall_height 0.15 对齐，0.2 会误杀步态波谷）。
+#   5) rewards：+ survival（恒+1.0，weight=β1=0.25）。
+#   6) commands.base_velocity.debug_vis=False（vendor 保真原文 True 不动；
+#       headless 材质系统缺 libXt/libGLU → goal marker preview
+#       surface spawn 死旋——可视化与训练语义无关）。
 #   未触碰：episode_length_s=20 / decimation=4 / sim.dt=0.005 / 命令
 #   U(-1,1)³ 10s / 2% 站桩 / push 关（官方 go2 谱系原值）。
 # ---------------------------------------------------------------------------
@@ -81,14 +80,14 @@ from isaaclab.utils.noise import UniformNoiseCfg as Unoise  # isort: skip
 
 @configclass
 class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
-    """官方 go2 rough override（vendor 谱系；diff 见文件头 D2/D3）。"""
+    """官方 go2 rough override（vendor 谱系；diff 见文件头 2/3）。"""
 
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
 
-        # [D3] ut tracking 装配单源（V6 decoder 物理契约）替代官方
-        # UNITREE_GO2_CFG（DCMotor 0.5/0.5 = 不同物理，design §3 禁用面）
+        # [3] tracking 装配单源（decoder 物理契约）替代官方
+        # UNITREE_GO2_CFG（DCMotor 0.5/0.5 = 不同物理，禁用面）
         _profile = make_go2_track_profile(prim_path="{ENV_REGEX_NS}/Robot")
         _profile.articulation_cfg.soft_joint_pos_limit_factor = 0.9
         self.scene.robot = _profile.articulation_cfg
@@ -99,7 +98,7 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
         self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
 
-        # reduce action scale（官方原文标量 0.25；[U2] 在 Upper 层换逐关节 dict）
+        # reduce action scale（官方原文标量 0.25；Upper 层换逐关节 dict）
         self.actions.joint_pos.scale = 0.25
 
         # event（官方 go2 rough 原文逐行）
@@ -150,7 +149,7 @@ class UnitreeGo2FlatEnvCfg(UnitreeGo2RoughEnvCfg):
         self.scene.terrain.terrain_type = "plane"
         self.scene.terrain.terrain_generator = None
         # no height scan（官方原文：self.observations.policy.height_scan =
-        # None；[D4] UPPER 层 observations 整组替换为 UpperObservationsCfg
+        # None；UPPER 层 observations 整组替换为 UpperObservationsCfg
         # ——无 height_scan 项，语义已覆盖，对不存在属性置 None 会炸）
         self.scene.height_scanner = None
         # no terrain curriculum（官方原文）
@@ -158,7 +157,7 @@ class UnitreeGo2FlatEnvCfg(UnitreeGo2RoughEnvCfg):
 
 
 # ---------------------------------------------------------------------------
-# UPPER 适配层（非 vendor）—— U0_UPPER_DESIGN §1.1 适配表落地
+# UPPER 适配层（非 vendor）—— 通道适配表落地
 # ---------------------------------------------------------------------------
 @configclass
 class UpperPolicyCfg(ObsGroup):
@@ -167,15 +166,14 @@ class UpperPolicyCfg(ObsGroup):
 
     顺序保留（adapter 表列号）；42 前缀切片契约 = UpperActor.proprio_dim。
     单帧 = 组级 history 缺省（v2.3.0 官方 velocity 组无 history_length
-    覆盖，term 缺省 1）；与官方组级 history=10 的 dog 形态不同——V6
-    decoder 契约是单帧 42（design §1.1）。
+    覆盖，term 缺省 1）；与官方组级 history=10 的形态不同——decoder 契约是单帧 42。
     """
 
     # -- decoder proprio 42（首 term；共享 noised obs，绝不再加第二噪声源） --
     # [表#1] joint_pos (0:12)：U±0.01，scale 1.0（官方同参）
     joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-NOISE_JOINT_POS, n_max=NOISE_JOINT_POS))
     # [表#2] joint_vel (12:24)：U±0.5 × scale 0.05 —— ⚠️ 官方项 U±1.5×0.01
-    #        不照抄（V6 契约）
+    #        不照抄（decoder 契约）
     joint_vel = ObsTerm(
         func=mdp.joint_vel_rel,
         noise=Unoise(n_min=-NOISE_JOINT_VEL, n_max=NOISE_JOINT_VEL),
@@ -208,17 +206,16 @@ class UpperPolicyCfg(ObsGroup):
 
 @configclass
 class UpperObservationsCfg(ObservationsCfg):
-    """obs 面：policy 组整体替换（design §1.1「policy 组整体替换」谱系）。"""
+    """obs 面：policy 组整体替换。"""
 
     policy: UpperPolicyCfg = UpperPolicyCfg()
 
 
 @configclass
 class Go2UpperFlatEnvCfg(UnitreeGo2FlatEnvCfg):
-    """π_upper velocity-flat go2 环境（任务 Isaac-Velocity-Flat-Unitree-Go2-Upper-v0）。
+    """π_upper velocity-flat go2 环境。
 
-    官方 flat 谱系 + 五处 UPPER 适配（文件头 U1–U5 表；设计锚
-    docs/U0_UPPER_DESIGN.md §1.1/§1.4/§1.5/§3）。
+    官方 flat 谱系 + 五处 UPPER 适配（文件头 1–5 表）。
     """
 
     observations: UpperObservationsCfg = UpperObservationsCfg()
@@ -227,23 +224,22 @@ class Go2UpperFlatEnvCfg(UnitreeGo2FlatEnvCfg):
         # post init of parent（官方 flat 谱系全链）
         super().__post_init__()
 
-        # [U2] 逐关节语义 scale（V6 训练语义：0.25×effort/KP；PhysX 槽位序
-        # 键面 = core/scale_vec 单源；isaaclab 侧施加 = design §1.4 裁定）
+        # [2] 逐关节语义 scale（decoder 训练语义：0.25×effort/KP；PhysX 槽位序
+        # 键面 = core/scale_vec 单源）
         self.actions.joint_pos.scale = go2_action_scale_table()
 
-        # [U3] heading_command=False（design §7-3；官方 True——economics
-        # 审计与 cmd 语义去耦合）
+        # [3] heading_command=False（官方 True）
         self.commands.base_velocity.heading_command = False
 
-        # [U4] 自建 height 终止 0.15（官方 flat 无 height 项；fall_height
-        # 对齐 tracking 契约——dog 0.2 步态误杀 367 次教训）
+        # [4] 自建 height 终止 0.15（官方 flat 无 height 项；fall_height
+        # 对齐 tracking 契约——0.2 会误杀步态波谷）
         self.terminations.root_height = DoneTerm(
             func=mdp.root_height, params={"threshold": 0.15})
 
-        # [U5] survival 项（恒 +1.0 func × weight=β1=0.25；design §1.5/§2）
+        # [5] survival 项（恒 +1.0 func × weight=β1=0.25）
         self.rewards.survival = RewTerm(func=mdp.alive_reward, weight=0.25)
 
-        # [U6] debug 可视化关闭（headless 材质 spawn 死旋；见文件头 U6 注）
+        # [6] debug 可视化关闭（headless 材质 spawn 死旋；见文件头注）
         self.commands.base_velocity.debug_vis = False
 
 

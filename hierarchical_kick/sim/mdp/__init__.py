@@ -18,13 +18,11 @@
 #      root_height（非上游），显式 re-export 以便 cfg 引用；
 #   4) ``.rewards`` re-export 面 = 上游两函数（feet_air_time/feet_slide
 #      verbatim）+ upper 自建 alive_reward（上游无此函数）。
-#   5) ``.ball_mdp`` re-export（UPPER 自建追加，U-Kick 球 env：
-#      docs/UKICK_BALL_ENV_DESIGN.md §8-WP2 名称契约——obs 三函数
+#   5) ``.ball_mdp`` re-export（UPPER 自建追加，U-Kick 球 env：obs 三函数
 #      ball_rel_b/goal_rel_b/push_geometry_b、终止五函数 goal_scored/
 #      ball_out/robot_fallen/robot_out_of_field/wall_stuck（接口备用）、
-#      奖励七函数（2026-09-30 phase0 规则接口对齐 + survival 走本包
-#      alive_reward）、任务几何常量；donor = soccer_absolute，
-#      provenance 见该文件头）。
+#      奖励七函数 + survival 走本包 alive_reward、任务几何常量；
+#      公式语义源 = soccer_absolute，provenance 见该文件头）。
 # ---------------------------------------------------------------------------
 
 """This sub-module contains the functions that are specific to the upper velocity-flat environments."""

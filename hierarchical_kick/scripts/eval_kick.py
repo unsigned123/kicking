@@ -1,14 +1,13 @@
-"""U-Kick eval 仪器（X-HK1 survival 剂量对照终评；cmd 臂上层 ckpt 行为审计）。
+"""U-Kick eval 仪器（上层 ckpt 行为审计 + kick 指标面）。
 
 与 train.py 同构造链（env cfg + 冻结低层 official 口径 + 上层 policy eval
 模式 **deterministic mean**），rollout 收集 per-episode 行为指标：
   - kick_count   踢击事件 = 球侧接触力范数 > 0.1N 的步数（包内
-                 core/kick_metrics.KickMetricsTracker 单源——与 UT
-                 universal_tracking/upper/core/kick_metrics.py 同函数同阈值）
+                 core/kick_metrics.KickMetricsTracker 单源）
   - goal         episode 结束帧 goal_scored 判据真值（终止面优先，与
                  DoneTerm 同函数同参数）
   - ball_speed   每集球速帧均值 |v_ball|（另附 per-ep max_ball_speed——
-                 tracker 同名列，UT audit 行口径）
+                 tracker 同名列）
   - behind_frac  cos_behind > 0 帧占比（ball_mdp._push_geometry_b_impl
                  第 0 列单一实现源）
   - falls        robot_fallen | base_contact 终止的集（真摔口径；
@@ -19,11 +18,11 @@
 
 输出：逐集表 + 汇总均值行（stdout；--out json 全量逐集 + 汇总）。
 
-用法（dog env_isaaclab，包根目录）::
+用法（包根目录）::
 
     python hierarchical_kick/scripts/eval_kick.py \
         --checkpoint logs/rsl_rl/upper_ukick_cmd/<run>/model_1999.pt \
-        --num_envs 64 --episodes 10 --out /tmp/eval_hk1_A_final.json
+        --num_envs 64 --episodes 10 --out /tmp/eval_kick.json
 
     # 总步数预算模式（二选一；--steps > 0 时按精确步数 rollout）
     ... --steps 5000
@@ -40,7 +39,7 @@ import hierarchical_kick.tasks  # noqa: F401
 from hierarchical_kick.tasks import KICK_CMD_TASK_ID
 
 parser = argparse.ArgumentParser(
-    description="U-Kick cmd 臂 ckpt 行为 eval（kick_count/goal/ball_speed/"
+    description="U-Kick cmd ckpt 行为 eval（kick_count/goal/ball_speed/"
                 "behind_frac/falls/ep_len；deterministic mean）")
 parser.add_argument("--task", type=str, default=KICK_CMD_TASK_ID,
                     help="Gym task id（hierarchical_kick.tasks 注册）")
@@ -54,25 +53,25 @@ parser.add_argument("--steps", type=int, default=0,
                     help="精确总 rollout 步数（>0 时启用并忽略 --episodes "
                          "停止判据）")
 parser.add_argument("--seed", type=int, default=42)
-# [X-HK1 挂账补仪] --stochastic：policy 走随机采样（训练期口径；缺省 False
-# = deterministic mean 既有口径）。UT 12.44 kick_count 锚 = 训练期
-# stochastic 口径，确定性口径下 kick_count 曾恒 0——两种口径都评才可比。
+# --stochastic：policy 走随机采样（训练期口径；缺省 False
+# = deterministic mean 既有口径）。确定性口径下接触时序不同 kick_count
+# 读数会不同——两种口径都评才可比。
 parser.add_argument("--stochastic", action="store_true", default=False,
-                    help="[X-HK2] policy 随机采样口径（训练期 stochastic；"
+                    help="policy 随机采样口径（训练期 stochastic；"
                          "缺省 deterministic mean。固定 --seed 保证臂间可比）")
-# [X-HK5] eval-only 球距覆写：球出生沿 +y 固定距（跳过距离采样；横向仍按
+# eval-only 球距覆写：球出生沿 +y 固定距（跳过距离采样；横向仍按
 # kick_randomization 采样）——球距响应扫描（0.1/0.5/1.0/2.0/2.7m 课程
 # 有效性曲线）单一口。缺省 None = 训练同款随机化分布。
 parser.add_argument("--ball_dist", type=float, default=None,
-                    help="[X-HK5] 球距覆写 m（球出生 = 狗前方沿 +y 恰该距离；"
+                    help="球距覆写 m（球出生 = 狗前方沿 +y 恰该距离；"
                          "缺省 None = 训练同款 dist 采样）")
 parser.add_argument("--out", type=str, default=None,
                     help="结果 json 输出路径（缺省仅 stdout）")
 parser.add_argument("--low_level_convention", type=str,
                     choices=["official", "legacy"], default="official",
-                    help="[arm D] 低层约定（与 train.py 同款）")
+                    help="低层约定（与 train.py 同款）")
 parser.add_argument("--low_level_ckpt", type=str, default=None,
-                    help="[arm D] 冻结低层 ckpt（缺省按 --low_level_convention"
+                    help="冻结低层 ckpt（缺省按 --low_level_convention"
                          " 分派）")
 from isaaclab.app import AppLauncher  # noqa: E402
 
@@ -150,14 +149,14 @@ def main() -> None:
     env_cfg.actions.joint_pos.low_level_ckpt_path = _low_path
     env_cfg.actions.joint_pos.low_level_convention = \
         str(args_cli.low_level_convention)
-    # [X-HK5] eval-only 球距覆写（reset_ball 采样口 dist 轴取常量）
+    # eval-only 球距覆写（reset_ball 采样口 dist 轴取常量）
     if args_cli.ball_dist is not None:
         env_cfg.kick_randomization.ball_dist_override = float(args_cli.ball_dist)
-        print(f"[hkick][eval][X-HK5] ball_dist 覆写: "
+        print(f"[hkick][eval] ball_dist 覆写: "
               f"{float(args_cli.ball_dist)} m（球出生 = 狗前方沿 +y 恰该距，"
               "横向仍采样；跳过距离课程采样）")
     else:
-        print("[hkick][eval][X-HK5] ball_dist 未覆写 → 训练同款随机化分布"
+        print("[hkick][eval] ball_dist 未覆写 → 训练同款随机化分布"
               "（eval 时段课程计数从 0 起，d_max≈起点 0.5m 域）")
 
     # 2) agent cfg（仅作 runner 构造面；训练超参不消费） ------------------- #

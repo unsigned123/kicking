@@ -1,6 +1,6 @@
 """Robot profiles（cmd-only 闭包：go2 常量 + profile dataclass，零 isaaclab）。
 
-[cmd-only 拆分] 原 UT robots 的 embodiments/registry 面
+robots 常量面（go2 本体 + 通用 profile）
 （多本体装配）不进本包闭包；仅保留 go2 单本体消费面。
 """
 from __future__ import annotations

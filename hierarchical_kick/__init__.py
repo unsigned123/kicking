@@ -4,7 +4,6 @@
 isaaclab/gym**（离线测试红线）。gym 注册面在 ``hierarchical_kick.tasks``
 （显式 import 才注册）；isaaclab 面在 ``sim/``（entry point 字符串懒加载）。
 
-谱系：自 UT 源树（分支 vae）upper/ 子树按 cmd-only 闭包拆分，
 task id ``Isaac-Kick-Flat-Unitree-Go2-Upper-Cmd-v0`` 冻结不变。
 """
 from __future__ import annotations

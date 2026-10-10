@@ -21,7 +21,6 @@ if _REPO_ROOT not in sys.path:
 _FAKES = os.path.join(_HERE, "fakes")
 if _FAKES not in sys.path:
     sys.path.insert(0, _FAKES)
-import importlib as _impl  # noqa: E402
 import rsl_rl  # noqa: E402
 
 print(f"[conftest] rsl_rl 来源: {rsl_rl.__file__}  (fake={os.path.realpath(_FAKES)})")
