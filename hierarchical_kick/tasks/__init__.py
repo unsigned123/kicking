@@ -41,6 +41,21 @@ HK_VELOCITY_RSL_RL_CFG_ENTRY_POINT = (
     "hierarchical_kick.agents_velocity:HKVelocityOfficialGo2FlatPPORunnerCfg")
 """官方口径 rsl_rl cfg entry point（官方 go2 flat agents cfg 复制适配）。"""
 
+# -- 官方 velocity-flat 训练面（cyberdog2；上游通用基座 + 本体参数快照） --
+HK_VELOCITY_CYBERDOG2_TASK_ID = "HK-Velocity-Flat-CyberDog2-v0"
+"""cyberdog2 官方口径 velocity-flat 任务 id（通用基座 LocomotionVelocityRoughEnvCfg fork）。"""
+
+HK_VELOCITY_CYBERDOG2_ENV_CFG_ENTRY_POINT = (
+    "hierarchical_kick.sim.velocity_official_cfg:"
+    "VelocityOfficialCyberDog2FlatEnvCfg")
+"""cyberdog2 官方口径 velocity-flat 面 env cfg entry point（字符串懒加载；
+基座 = 上游通用 LocomotionVelocityRoughEnvCfg，__post_init__ 修复 + 覆写）。"""
+
+HK_VELOCITY_CYBERDOG2_RSL_RL_CFG_ENTRY_POINT = (
+    "hierarchical_kick.agents_velocity:"
+    "HKVelocityOfficialCyberDog2FlatPPORunnerCfg")
+"""cyberdog2 官方口径 rsl_rl cfg entry point（官方 go2 flat agents cfg 同参换名）。"""
+
 try:
     import gymnasium as gym
 
@@ -63,6 +78,17 @@ try:
             "rsl_rl_cfg_entry_point": HK_VELOCITY_RSL_RL_CFG_ENTRY_POINT,
         },
     )
+
+    gym.register(
+        id=HK_VELOCITY_CYBERDOG2_TASK_ID,
+        entry_point=HK_VELOCITY_TASK_ENTRY_POINT,
+        disable_env_checker=True,
+        kwargs={
+            "env_cfg_entry_point": HK_VELOCITY_CYBERDOG2_ENV_CFG_ENTRY_POINT,
+            "rsl_rl_cfg_entry_point": (
+                HK_VELOCITY_CYBERDOG2_RSL_RL_CFG_ENTRY_POINT),
+        },
+    )
 except (ImportError, ModuleNotFoundError):
     # 离线（无 gymnasium）静默跳过：注册字符串面常量仍可消费
     pass
@@ -76,4 +102,7 @@ __all__ = [
     "HK_VELOCITY_TASK_ENTRY_POINT",
     "HK_VELOCITY_ENV_CFG_ENTRY_POINT",
     "HK_VELOCITY_RSL_RL_CFG_ENTRY_POINT",
+    "HK_VELOCITY_CYBERDOG2_TASK_ID",
+    "HK_VELOCITY_CYBERDOG2_ENV_CFG_ENTRY_POINT",
+    "HK_VELOCITY_CYBERDOG2_RSL_RL_CFG_ENTRY_POINT",
 ]

@@ -11,9 +11,13 @@ RslRlVecEnvWrapper + OnPolicyRunner；kick 面 scripts/train.py 同款）。
     python hierarchical_kick/scripts/train_velocity.py \
         --num_envs 4096 --max_iterations 300
 
-产物：logs/rsl_rl/hk_velocity_flat_official/<date>_<run_name>/
-model_*.pt（终点 model_(N-1).pt → 拷入 hierarchical_kick/weights/
-velocity_flat_official/ 后为官方口径低层缺省资产 model_walk.pt）。
+--robot 分派（缺省 go2 = 历史路径零变化）：
+    go2        → HK-Velocity-Flat-Unitree-Go2-v0（go2-flat fork 链）
+    cyberdog2  → HK-Velocity-Flat-CyberDog2-v0（上游通用基座链）
+
+产物：logs/rsl_rl/hk_velocity_flat_official|hk_velocity_flat_cyberdog2/
+<date>_<run_name>/model_*.pt（过行走门后拷入 hierarchical_kick/weights/
+velocity_flat_official/<robot>/ 官方口径低层缺省资产）。
 """
 from __future__ import annotations
 
@@ -23,13 +27,20 @@ from datetime import datetime
 
 # ① 显式注册拉起（字符串懒加载，零 eager 导入；离线无 gymnasium 静默跳过）
 import hierarchical_kick.tasks  # noqa: F401
-from hierarchical_kick.tasks import HK_VELOCITY_TASK_ID
+from hierarchical_kick.tasks import (  # noqa: F401
+    HK_VELOCITY_CYBERDOG2_TASK_ID,
+    HK_VELOCITY_TASK_ID,
+)
 
 parser = argparse.ArgumentParser(
     description="官方口径 velocity-flat train（官方 48 维单帧 obs + 均匀 "
                 "0.5 动作 scale；冻结低层官方 ckpt 产出面）")
-parser.add_argument("--task", type=str, default=HK_VELOCITY_TASK_ID,
-                    help="Gym task id（hierarchical_kick.tasks 注册）")
+parser.add_argument("--robot", type=str, default="go2",
+                    choices=["go2", "cyberdog2"],
+                    help="本体 profile（分派 task/agents/关节序契约面）")
+parser.add_argument("--task", type=str, default=None,
+                    help="Gym task id（缺省按 --robot 分派；显式给定时须"
+                         "与 --robot 一致，否则 fail-fast）")
 parser.add_argument("--num_envs", type=int, default=None)
 parser.add_argument("--seed", type=int, default=None)
 parser.add_argument("--max_iterations", type=int, default=None)
@@ -47,10 +58,24 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # --- launch 缺省分流 + 守卫（AppLauncher 拉起前 fail-fast） ---- #
-# 单 task 面：本入口仅服务官方口径 velocity 任务（kick cmd 面走 train.py）
-if args_cli.task != HK_VELOCITY_TASK_ID:
+# robot → (task id, agents cfg 名) 分派单源（tasks 注册字符串面同源）
+_VELOCITY_TASK_BY_ROBOT = {
+    "go2": HK_VELOCITY_TASK_ID,
+    "cyberdog2": HK_VELOCITY_CYBERDOG2_TASK_ID,
+}
+if args_cli.task is None:
+    args_cli.task = _VELOCITY_TASK_BY_ROBOT[args_cli.robot]
+elif args_cli.task != _VELOCITY_TASK_BY_ROBOT[args_cli.robot]:
     raise SystemExit(
-        f"[hkick][velocity] 仅支持任务 id: {HK_VELOCITY_TASK_ID}"
+        f"[hkick][velocity] --task 与 --robot 不一致: robot="
+        f"{args_cli.robot} 须 task {_VELOCITY_TASK_BY_ROBOT[args_cli.robot]}"
+        f"（收到 --task {args_cli.task}）")
+
+# 单 task 面：本入口仅服务官方口径 velocity 任务（kick cmd 面走 train.py）
+if args_cli.task not in _VELOCITY_TASK_BY_ROBOT.values():
+    raise SystemExit(
+        f"[hkick][velocity] 仅支持任务 id: "
+        f"{sorted(_VELOCITY_TASK_BY_ROBOT.values())}"
         f"（收到 --task {args_cli.task}；kick cmd 面请走 "
         "hierarchical_kick/scripts/train.py）")
 
@@ -77,7 +102,7 @@ from isaaclab_rl.rsl_rl import (  # noqa: E402
 )
 from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
-from hierarchical_kick.robots.go2 import GO2_JOINT_ORDER_IL  # noqa: E402
+from hierarchical_kick.robots import CYBERDOG2_JOINT_ORDER_IL, GO2_JOINT_ORDER_IL  # noqa: E402
 from hierarchical_kick.utils.parse_cfg import (  # noqa: E402
     get_checkpoint_path,
     parse_env_cfg,
@@ -121,9 +146,14 @@ def main() -> None:
           f"{jv_scale} history_length={hist}（单帧）action.scale={act_scale}")
 
     # 2) agent cfg（官方 go2 flat agents cfg；handle_deprecated 演绎新面） - #
-    from hierarchical_kick.agents_velocity import (
-        HKVelocityOfficialGo2FlatPPORunnerCfg as _RunnerCfg,
-    )
+    if args_cli.robot == "go2":
+        from hierarchical_kick.agents_velocity import (
+            HKVelocityOfficialGo2FlatPPORunnerCfg as _RunnerCfg,
+        )
+    else:
+        from hierarchical_kick.agents_velocity import (
+            HKVelocityOfficialCyberDog2FlatPPORunnerCfg as _RunnerCfg,
+        )
     agent_cfg = _RunnerCfg()
     if args_cli.max_iterations:
         agent_cfg.max_iterations = int(args_cli.max_iterations)
@@ -140,19 +170,22 @@ def main() -> None:
         agent_cfg, _pkg_version("rsl-rl-lib"))
 
     # 3) env + 关节序打印（与 kick env 逐位比对锚） ----------------------- #
+    expected_joints = (GO2_JOINT_ORDER_IL if args_cli.robot == "go2"
+                       else CYBERDOG2_JOINT_ORDER_IL)
     env = gym.make(args_cli.task, cfg=env_cfg)
     env.reset()  # scene spawn 完成（joint_names / group_obs_dim 可读面）
     sim_env = env.unwrapped
     joint_names = list(sim_env.scene["robot"].joint_names)
     print(f"[hkick][velocity] velocity env joint order ({len(joint_names)}): "
           f"{joint_names}")
-    if set(joint_names) != set(GO2_JOINT_ORDER_IL):
+    if set(joint_names) != set(expected_joints):
         raise SystemExit(
             f"[hkick][velocity] env 关节集合漂移: {joint_names} != "
-            f"{list(GO2_JOINT_ORDER_IL)}（fail-fast）")
-    if joint_names != list(GO2_JOINT_ORDER_IL):
-        print(f"[hkick][velocity][WARN] 关节序与 GO2_JOINT_ORDER_IL 有序差 "
-              f"{joint_names} vs {list(GO2_JOINT_ORDER_IL)}")
+            f"{list(expected_joints)}（fail-fast）")
+    if joint_names != list(expected_joints):
+        print(f"[hkick][velocity][WARN] 关节序与注册表预测序有序差 "
+              f"{joint_names} vs {list(expected_joints)}"
+              "（请回填 robots 常量 CYBERDOG2_JOINT_ORDER_IL）")
     gdim = {str(k): int(v[-1]) for k, v in
             sim_env.observation_manager.group_obs_dim.items()}
     print("[hkick][velocity] runtime group_obs_dim:", gdim)

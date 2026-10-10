@@ -84,7 +84,24 @@ class HKVelocityOfficialGo2FlatPPORunnerCfg(HKVelocityOfficialGo2RoughPPORunnerC
         self.policy.critic_hidden_dims = [128, 128, 128]
 
 
+@configclass
+class HKVelocityOfficialCyberDog2FlatPPORunnerCfg(
+        HKVelocityOfficialGo2FlatPPORunnerCfg):
+    """cyberdog2 flat PPO cfg（任务 HK-Velocity-Flat-CyberDog2-v0）。
+
+    超参/policy 结构与 go2 flat 完全同参（官方口径低层契约不变：
+    MLP[128,128,128] ELU、官方 48 维单帧 obs）；仅 experiment_name 换
+    cyberdog2 面隔离（logs/rsl_rl/ 不与 go2 产物混写）。
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "hk_velocity_flat_cyberdog2"
+
+
 __all__ = [
     "HKVelocityOfficialGo2RoughPPORunnerCfg",
     "HKVelocityOfficialGo2FlatPPORunnerCfg",
+    "HKVelocityOfficialCyberDog2FlatPPORunnerCfg",
 ]
