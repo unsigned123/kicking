@@ -181,9 +181,8 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         # go2-flat 同款（rough 段置 None；base 的 .*THIGH 名不属 cyberdog2）
         self.rewards.undesired_contacts = None
 
-        # --- 奖励谱系（go2 rough→flat 谱系基础值；track 幅值 round-8 由
-        #     xiaomi 快照覆写，见下） -----------------------------------
-        self.rewards.feet_air_time.weight = 0.25
+        # --- 奖励谱系（go2 rough→flat 谱系基础值；track/步态幅值 round-8/9
+        #     由 xiaomi 快照覆写，见下） ---------------------------------
         self.rewards.dof_torques_l2.weight = -0.0002
         self.rewards.flat_orientation_l2.weight = -2.5
 
@@ -219,6 +218,11 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         #     −0.10/reset 温和化（joint 0.75-1.25、pose ±0.25）保留。 ---
         self.rewards.track_lin_vel_xy_exp.weight = 15.0
         self.rewards.track_ang_vel_z_exp.weight = 8.0
+        # 步态塑形（round-9；round-8 产物原地碎步不位移——摆动相收益
+        # 不足）：feet_air_time 0.25→0.8、threshold 0.5→0.2（均 xiaomi
+        # 快照值）——抬脚摆动相直接计酬，碎步与大跨步分离。
+        self.rewards.feet_air_time.weight = 0.8
+        self.rewards.feet_air_time.params["threshold"] = 0.2
         self.rewards.survival = RewTerm(
             func=velocity_mdp.is_alive, weight=0.1)
         self.rewards.action_rate_l2.weight = -0.10

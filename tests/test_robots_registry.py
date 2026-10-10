@@ -133,6 +133,8 @@ def test_velocity_cfg_source_markers():
     assert "self.rewards.track_ang_vel_z_exp.weight = 8.0" in src
     assert "self.rewards.action_rate_l2.weight = -0.10" in src
     assert "self.rewards.dof_acc_l2.weight = -2.5e-7" in src
+    assert "self.rewards.feet_air_time.weight = 0.8" in src
+    assert 'self.rewards.feet_air_time.params["threshold"] = 0.2' in src
     assert "(0.75, 1.25)" in src
 
 
