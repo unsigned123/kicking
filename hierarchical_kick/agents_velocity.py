@@ -98,6 +98,12 @@ class HKVelocityOfficialCyberDog2FlatPPORunnerCfg(
         super().__post_init__()
 
         self.experiment_name = "hk_velocity_flat_cyberdog2"
+        # 探索降噪（round-5；训练超参，非冻结低层契约）：官方 init_noise_std
+        # 1.0 × 动作 scale 0.5 下 cyberdog2（kp25 弱执行器）被初始探索直接
+        # 踢倒（13 步团灭，PPO 全缓冲无长存活样本，站桩/行走盆地不可达
+        # ——round-1~4 递进诊断记录于 sim/velocity_official_cfg.py）；
+        # std 0.5 = 初始目标抖动 ±0.25 rad，站桩盆地可达。
+        self.policy.init_noise_std = 0.5
 
 
 __all__ = [

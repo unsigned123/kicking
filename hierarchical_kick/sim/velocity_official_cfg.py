@@ -193,6 +193,9 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.commands.base_velocity.ranges.lin_vel_x = (-1.6, 1.6)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.55, 0.55)
         self.commands.base_velocity.ranges.ang_vel_z = (-2.5, 2.5)
+        # 站桩盆地播种（round-5）：standing 份额 0.02→0.10——10% env 零命令
+        # 站桩，为零动作长存活提供直接正样本（弱执行器探索动力学对策）
+        self.commands.base_velocity.rel_standing_envs = 0.10
 
         # --- 官方口径覆写（与 go2 版同一套四件） -------------------------
         # ① joint_vel scale → 1.0（官方 raw rad/s）
