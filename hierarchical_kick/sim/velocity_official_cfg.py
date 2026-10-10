@@ -193,6 +193,10 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         # 站桩盆地播种（round-5）：standing 份额 0.02→0.10——10% env 零命令
         # 站桩，为零动作长存活提供直接正样本（弱执行器探索动力学对策）
         self.commands.base_velocity.rel_standing_envs = 0.10
+        # 命令重采样（round-10）：官方 (10,10)→xiaomi (1.0,5.0)——20s 回合
+        # 仅 2 次命令切换制约命令条件化学习（r8/r9 error_vel_xy 平台
+        # ≈0.8 = 命令未学的最后结构性嫌疑）。
+        self.commands.base_velocity.resampling_time_range = (1.0, 5.0)
 
         # --- 官方口径覆写（与 go2 版同一套四件） -------------------------
         # ① joint_vel scale → 1.0（官方 raw rad/s）
