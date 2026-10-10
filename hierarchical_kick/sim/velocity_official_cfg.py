@@ -67,6 +67,8 @@ from isaaclab_tasks.core.velocity.config.go2.flat_env_cfg import (  # noqa: E501
 from isaaclab_tasks.core.velocity.velocity_env_cfg import (  # noqa: E501
     LocomotionVelocityRoughEnvCfg,
 )
+import isaaclab_tasks.core.velocity.mdp as velocity_mdp  # noqa: E402
+from isaaclab.managers import RewardTermCfg as RewTerm  # noqa: E402
 
 from hierarchical_kick.robots import make_robot_profile
 
@@ -205,6 +207,18 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.commands.base_velocity.heading_command = False
         # debug marker 关（headless goal marker 材质死旋防护；训练无关）
         self.commands.base_velocity.debug_vis = False
+
+        # --- 抗塌陷塑形（round-2；奖励/reset = 非契约面，obs/动作/命令
+        #     契约不动。round-1 诊断：官方奖励谱系下 cyberdog2（kp25 弱
+        #     执行器）陷入"死亡寻求+高频关节抖动"平衡（ep-len 12、reward
+        #     -1.7、探针 qd ±25 rad/s 原地滑移）——三件对策：生存正信号/
+        #     抖动加罚/温和 reset（reset 面取 xiaomi 成功快照口径）） ----
+        self.rewards.survival = RewTerm(
+            func=velocity_mdp.is_alive, weight=0.25)
+        self.rewards.action_rate_l2.weight = -0.10
+        self.events.reset_robot_joints.params["position_range"] = (0.75, 1.25)
+        self.events.reset_base.params["pose_range"] = {
+            "x": (-0.25, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)}
 
 
 def VelocityOfficialFlatEnvCfg(robot: str = "go2"):

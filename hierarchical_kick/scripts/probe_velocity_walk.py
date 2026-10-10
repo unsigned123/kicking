@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 
 # ① 显式注册拉起（字符串懒加载；与 train_velocity.py 同款）
 import hierarchical_kick.tasks  # noqa: F401
@@ -102,18 +103,33 @@ _GAIT_JOINTS_BY_ROBOT = {
 
 
 class _ActorMlp(nn.Module):
-    """rsl_rl ckpt actor MLP 复原（actor.{2i} Linear 键 + ELU；末层无激活）。"""
+    """velocity ckpt actor MLP 复原（ELU 层间；末层无激活）。
 
-    def __init__(self, state_dict: dict):
+    兼容两种 rsl_rl 存面：
+      - 旧 OnPolicyRunner save：``model_state_dict`` 内 ``actor.{i}.*``；
+      - rsl-rl-lib 新 save：顶层 ``actor_state_dict`` 内 ``mlp.{i}.*``
+        （distribution.std_param 跳过）。
+    """
+
+    def __init__(self, ckpt: dict):
         super().__init__()
-        idxs = sorted({int(k.split(".")[1]) for k in state_dict
-                       if k.startswith("actor.")})
+        sd = ckpt.get("model_state_dict", ckpt)
+        raw = sd.get("actor_state_dict", sd)
+        pat = re.compile(r"^(?:actor\.)?mlp\.(\d+)\.(weight|bias)$")
+        tensors = {}
+        for k, v in raw.items():
+            m = pat.match(k)
+            if m:
+                tensors[(int(m.group(1)), m.group(2))] = v
+        if not tensors:
+            raise SystemExit(
+                f"[hkick][probe] ckpt 无 actor MLP 键（keys={list(raw)[:8]}…）")
         linears = []
-        for i in idxs:
-            w = state_dict[f"actor.{i}.weight"]
+        for i in sorted({idx for idx, _ in tensors}):
+            w = tensors[(i, "weight")]
             lin = nn.Linear(w.shape[1], w.shape[0])
             lin.weight.data = w.clone()
-            lin.bias.data = state_dict[f"actor.{i}.bias"].clone()
+            lin.bias.data = tensors[(i, "bias")].clone()
             linears.append(lin)
         self.layers = nn.ModuleList(linears)
         self.act = nn.ELU()
@@ -184,11 +200,10 @@ def main() -> None:
                          f"{list(expected)}")
 
     ckpt = torch.load(_ckpt_path, map_location="cpu", weights_only=False)
-    state = ckpt.get("model_state_dict", ckpt)
-    actor = _ActorMlp(state).to(device).eval()
+    actor = _ActorMlp(ckpt).to(device).eval()
     n_params = sum(p.numel() for p in actor.parameters())
     print(f"[hkick][probe] actor: {len(actor.layers)} 层 {n_params} 参数"
-          f"（ckpt iter={ckpt.get('iterations', '?')}）")
+          f"（ckpt iter={ckpt.get('iter', ckpt.get('iterations', '?'))}）")
 
     cmd_term = sim_env.command_manager.get_term("base_velocity")
     const_cmd = torch.tensor([args_cli.cmd_vx, 0.0, 0.0], device=device)
@@ -216,7 +231,10 @@ def main() -> None:
     with torch.inference_mode():
         for step in range(1, int(args_cli.steps) + 1):
             cmd_term.vel_command_b[:] = const_cmd  # 常量命令覆写（逐位）
-            obs_dict, _rew, dones, _extras = env.step(actor(_obs()))
+            outs = env.step(actor(_obs()))
+            obs_dict, _rew = outs[0], outs[1]
+            dones = (outs[2] | outs[3]) if len(outs) == 5 else outs[2]
+            _extras = outs[-1]
             v_body = float(robot.data.root_lin_vel_b[:, 0].mean())
             v_body_hist.append(v_body)
             qd_hist.append(robot.data.joint_vel[0, gait_idx].detach().cpu())

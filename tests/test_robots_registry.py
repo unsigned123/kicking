@@ -125,6 +125,10 @@ def test_velocity_cfg_source_markers():
         and "(-2.5, 2.5)" in src
     # 注册表工厂（Unknown fail-fast 面）
     assert 'def VelocityOfficialFlatEnvCfg(robot: str = "go2")' in src
+    # 抗塌陷塑形（round-2 非契约面：survival 正信号/抖动加罚/温和 reset）
+    assert "velocity_mdp.is_alive" in src
+    assert "self.rewards.action_rate_l2.weight = -0.10" in src
+    assert "(0.75, 1.25)" in src
 
 
 def test_tasks_cyberdog2_registration_strings():
