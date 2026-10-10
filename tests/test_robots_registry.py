@@ -125,9 +125,12 @@ def test_velocity_cfg_source_markers():
         and "(-2.5, 2.5)" in src
     # 注册表工厂（Unknown fail-fast 面）
     assert 'def VelocityOfficialFlatEnvCfg(robot: str = "go2")' in src
-    # 抗塌陷塑形（round-2 非契约面：survival 正信号/抖动加罚/温和 reset）
+    # 抗塌陷塑形（round-2→4 非契约面：survival 占优死亡/dof_acc 软化/
+    # 抖动加罚/温和 reset）
     assert "velocity_mdp.is_alive" in src
+    assert "func=velocity_mdp.is_alive, weight=1.0" in src
     assert "self.rewards.action_rate_l2.weight = -0.10" in src
+    assert "self.rewards.dof_acc_l2.weight = -1.0e-7" in src
     assert "(0.75, 1.25)" in src
 
 

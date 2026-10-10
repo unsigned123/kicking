@@ -208,14 +208,19 @@ class VelocityOfficialCyberDog2FlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         # debug marker 关（headless goal marker 材质死旋防护；训练无关）
         self.commands.base_velocity.debug_vis = False
 
-        # --- 抗塌陷塑形（round-2；奖励/reset = 非契约面，obs/动作/命令
-        #     契约不动。round-1 诊断：官方奖励谱系下 cyberdog2（kp25 弱
-        #     执行器）陷入"死亡寻求+高频关节抖动"平衡（ep-len 12、reward
-        #     -1.7、探针 qd ±25 rad/s 原地滑移）——三件对策：生存正信号/
-        #     抖动加罚/温和 reset（reset 面取 xiaomi 成功快照口径）） ----
+        # --- 抗塌陷塑形（round-2→4 递进；奖励/reset = 非契约面，obs/动作/
+        #     命令契约不动。round-1/2/3 诊断：官方奖励谱系下 cyberdog2
+        #     （kp25 弱执行器）陷入"高频关节抖动"吸引子（qd ±15-30 rad/s，
+        #     dof_acc ≈ −2.3/step）→ 抖动代价 >> 生存收益 ⇒ PPO 学会速死
+        #     （ep-len 12-21、reward −1.7 ~ −3）。round-4 对策 = 让"活着"
+        #     严格占优"死亡"：survival 1.0（站桩 +1.0/step，抖动存活
+        #     +0.3/step，死亡 ≈0）+ dof_acc 软化 −1e-7（仍罚振动，但不再
+        #     罚得让死亡更优）；tracking 梯度随后接管。reset 温和化（xiaomi
+        #     快照口径）保留。 --------------------------------------------
         self.rewards.survival = RewTerm(
-            func=velocity_mdp.is_alive, weight=0.25)
+            func=velocity_mdp.is_alive, weight=1.0)
         self.rewards.action_rate_l2.weight = -0.10
+        self.rewards.dof_acc_l2.weight = -1.0e-7
         self.events.reset_robot_joints.params["position_range"] = (0.75, 1.25)
         self.events.reset_base.params["pose_range"] = {
             "x": (-0.25, 0.25), "y": (-0.25, 0.25), "yaw": (-3.14, 3.14)}
