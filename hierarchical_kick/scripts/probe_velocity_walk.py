@@ -213,6 +213,7 @@ def main() -> None:
     ball_anchor = None
     qd_hist: list = []
     v_body_hist: list = []
+    body_z_hist: list = []
 
     def _obs() -> torch.Tensor:
         obs = obs_dict["policy"]
@@ -237,6 +238,7 @@ def main() -> None:
             _extras = outs[-1]
             v_body = float(robot.data.root_lin_vel_b[:, 0].mean())
             v_body_hist.append(v_body)
+            body_z_hist.append(float(robot.data.root_pos_w[:, 2].mean()))
             qd_hist.append(robot.data.joint_vel[0, gait_idx].detach().cpu())
             if args_cli.ball:
                 ball_pos = sim_env.scene["ball"].data.root_pos_w.detach()
@@ -262,6 +264,8 @@ def main() -> None:
     qd_mean = float(qd[:, 0].abs().mean())
     v_last = float(sum(v_body_hist[-50:]) / max(1, len(v_body_hist[-50:])))
     v_peak = float(max(v_body_hist))
+    z_min = float(min(body_z_hist))
+    z_mean = float(sum(body_z_hist) / len(body_z_hist))
     print("\n==================== 行走门判定 ====================")
     print(f"① v_body: 末 50 步均值={v_last:.4f} m/s  峰值={v_peak:.4f} "
           f"（门 ≥0.25 → {'PASS' if v_last >= 0.25 else 'FAIL'}）")
@@ -269,6 +273,9 @@ def main() -> None:
           f"std={float(qd[:, 0].std()):.3f} 符号翻转={flips}"
           f"（门 翻转>10 且 |mean|>1 → "
           f"{'PASS' if flips > 10 and qd_mean > 1.0 else 'FAIL'}）")
+    print(f"  body_z: min={z_min:.4f} mean={z_mean:.4f} m"
+          f"（kick 面 robot_fallen 高度阈值证据面——cyberdog2 阈 0.20 / "
+          f"go2 阈 0.16：步态波谷 min 若低于阈值则该阈会误杀）")
     if args_cli.ball:
         ball_pos = sim_env.scene["ball"].data.root_pos_w.detach()
         final = torch.linalg.vector_norm(ball_pos[:, :2] - ball_anchor, dim=-1)

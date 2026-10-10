@@ -25,6 +25,20 @@ KICK_CMD_RSL_RL_CFG_ENTRY_POINT = (
     "hierarchical_kick.agents:UpperKickCmdPPORunnerCfg")
 """kick cmd 面 rsl_rl cfg entry point（UpperKickCmdPPORunnerCfg，3 维命令 actor）。"""
 
+# -- kick cmd 面 rsl_rl cfg entry point（cyberdog2；experiment 隔离子类） --
+KICK_CMD_CYBERDOG2_RSL_RL_CFG_ENTRY_POINT = (
+    "hierarchical_kick.agents:UpperCyberDog2KickCmdPPORunnerCfg")
+"""cyberdog2 kick cmd 面 rsl_rl cfg entry point（PPO 面逐字同 go2 版，
+仅 experiment_name = upper_ukick_cmd_cyberdog2）。"""
+
+# -- cyberdog2 kick cmd 面（本体置换 C1-C7 见 ball_env_cfg 尾段表） --
+KICK_CMD_CYBERDOG2_TASK_ID = "Isaac-Kick-Flat-CyberDog2-Upper-Cmd-v0"
+"""cyberdog2 kick cmd 任务 id（真分层面 CyberDog2KickFlatEnvCfgCommand）。"""
+
+KICK_CMD_CYBERDOG2_ENV_CFG_ENTRY_POINT = (
+    "hierarchical_kick.sim.ball_env_cfg:CyberDog2KickFlatEnvCfgCommand")
+"""cyberdog2 kick cmd 面 env cfg entry point（字符串懒加载）。"""
+
 # -- 官方 velocity-flat 训练面（官方口径低层 ckpt 的产出面） --
 HK_VELOCITY_TASK_ID = "HK-Velocity-Flat-Unitree-Go2-v0"
 """官方口径 velocity-flat 任务 id（fork UnitreeGo2FlatEnvCfg 覆写回上游口径）。"""
@@ -70,6 +84,16 @@ try:
     )
 
     gym.register(
+        id=KICK_CMD_CYBERDOG2_TASK_ID,
+        entry_point=KICK_CMD_TASK_ENTRY_POINT,
+        disable_env_checker=True,
+        kwargs={
+            "env_cfg_entry_point": KICK_CMD_CYBERDOG2_ENV_CFG_ENTRY_POINT,
+            "rsl_rl_cfg_entry_point": KICK_CMD_CYBERDOG2_RSL_RL_CFG_ENTRY_POINT,
+        },
+    )
+
+    gym.register(
         id=HK_VELOCITY_TASK_ID,
         entry_point=HK_VELOCITY_TASK_ENTRY_POINT,
         disable_env_checker=True,
@@ -98,6 +122,9 @@ __all__ = [
     "KICK_CMD_TASK_ENTRY_POINT",
     "KICK_CMD_ENV_CFG_ENTRY_POINT",
     "KICK_CMD_RSL_RL_CFG_ENTRY_POINT",
+    "KICK_CMD_CYBERDOG2_TASK_ID",
+    "KICK_CMD_CYBERDOG2_ENV_CFG_ENTRY_POINT",
+    "KICK_CMD_CYBERDOG2_RSL_RL_CFG_ENTRY_POINT",
     "HK_VELOCITY_TASK_ID",
     "HK_VELOCITY_TASK_ENTRY_POINT",
     "HK_VELOCITY_ENV_CFG_ENTRY_POINT",

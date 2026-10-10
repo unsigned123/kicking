@@ -1,0 +1,47 @@
+# Cyberdog2 本体静态元数据注册表（schema 镜像 go2.yaml；kick 面消费 =
+# core/scale_vec 读值面 + 文档面。字段语义 = go2.yaml 同名）。
+#
+# 单源 = xiaomi 成功快照（xiaomi_cyberdog2_rl，URDF md5 f688df9d 逐位同包内
+# assets/cyberdog2/urdf/cyberdog2.urdf）：
+#   - 资产/执行器：CYBERDOG2_CFG（DCMotor kp25/d0.5/effort 12，
+#     velocity_limit 30.9971）
+#   - action scale：xiaomi deploy.yaml 快照 **uniform 0.25**（vf_500_benchmark
+#     params/deploy.yaml:29 全 12 关节 0.25）——"以快照为准"；公式
+#     0.25×effort/KP=0.25×12/25=0.12 为备选口径（未被快照采用，仅存档）。
+#   - 站高几何（本 URDF FK 实算，非 xiaomi 报文 0.40——那是 spawn z）：
+#     default_q(hip0.8/knee−1.5) 下 body 中心站高 ≈0.236m
+#     （thigh 0.12×cos0.8 + shank 0.17391×cos0.7 + 足球 r0.019）。
+name: cyberdog2
+urdf: hierarchical_kick/assets/cyberdog2/urdf/cyberdog2.urdf
+joint_map:                          # canonical abad/hip/knee -> URDF（同名恒等）
+  FL: {abad: FL_abad_joint, hip: FL_hip_joint, knee: FL_knee_joint}
+  FR: {abad: FR_abad_joint, hip: FR_hip_joint, knee: FR_knee_joint}
+  RL: {abad: RL_abad_joint, hip: RL_hip_joint, knee: RL_knee_joint}
+  RR: {abad: RR_abad_joint, hip: RR_hip_joint, knee: RR_knee_joint}
+actuator: {type: dc_motor, stiffness: 25.0, damping: 0.5, effort: 12.0,
+           velocity_limit: 30.9971}
+# action scale（xiaomi deploy.yaml 快照 uniform 值；scale_vec 消费此字段 +
+# actuator.stiffness 做一致性校验）
+action_scale: xiaomi_deploy_uniform
+action_scale_value: 0.25
+urdf_effort: {abad: 12.0001, hip: 12.0001, knee: 12.0001}
+default_stance:                     # 规范 12 名（= CYBERDOG2_DEFAULT_Q）
+  FL_abad: 0.10
+  FL_hip: 0.80
+  FL_knee: -1.50
+  FR_abad: -0.10
+  FR_hip: 0.80
+  FR_knee: -1.50
+  RL_abad: 0.10
+  RL_hip: 1.00
+  RL_knee: -1.50
+  RR_abad: -0.10
+  RR_hip: 1.00
+  RR_knee: -1.50
+spawn_offset: [0.0, 0.0]
+spawn_height: 0.30                  # FK 校正值（站高 0.236；xiaomi 原值 0.40 落体冲击，deviation 在案）
+fall_height: 0.17                   # kick 面 robot_fallen 高度支（探针实测标定，依据见 ball_mdp.CYBERDOG2_FALLEN_BODY_Z_THRESHOLD；owner 建议值 0.20 被步态波谷实测 0.1839 否决）
+base_body: body
+soft_joint_pos_limit_factor: 0.9
+mirror_prob: 0.0
+collision_group: 0

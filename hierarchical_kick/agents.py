@@ -101,8 +101,21 @@ class UpperKickCmdPPORunnerCfg(UpperGo2FlatPPORunnerCfg):
     actor = UpperCmdActorCfg()            # 3 维命令 actor（obs 契约缺省 kick 55）
 
 
+@configclass
+class UpperCyberDog2KickCmdPPORunnerCfg(UpperKickCmdPPORunnerCfg):
+    """cyberdog2 cmd「真分层」runner cfg（Isaac-Kick-Flat-CyberDog2-Upper-Cmd-v0）。
+
+    与 go2 版**唯一 diff = experiment_name**（logs 隔离；PPO 超参/actor/
+    critic/obs 契约 55 逐字继承——跨本体公平性纪律：同一配方面对照）。
+    """
+
+    experiment_name = "upper_ukick_cmd_cyberdog2"
+    # logs/rsl_rl/upper_ukick_cmd_cyberdog2/
+
+
 __all__ = [
     "UpperCmdActorCfg",
     "UpperGo2FlatPPORunnerCfg",
     "UpperKickCmdPPORunnerCfg",
+    "UpperCyberDog2KickCmdPPORunnerCfg",
 ]

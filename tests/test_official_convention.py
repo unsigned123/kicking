@@ -308,7 +308,9 @@ def test_train_convention_flag_anchors():
     assert '"--low_level_convention"' in src
     assert 'choices=["official", "legacy"]' in src
     assert 'default="official"' in src
-    assert "DEFAULT_LOW_LEVEL_CKPT_OFFICIAL" in src
+    # official 缺省按 --robot 分派（frozen_weights 单源函数；
+    # [cyberdog2-kick] 阶段二：go2 平面 / cyberdog2 子目录双缺省）
+    assert "default_low_level_ckpt_official(args_cli.robot)" in src
     assert "env_cfg.actions.joint_pos.low_level_convention" in src
     # legacy 缺省锚保持（旧 ckpt 兼容面）
     assert "model_2999.pt" in src
@@ -342,7 +344,9 @@ def test_ball_env_cfg_cmd_face_convention_note():
             body_src = ast.get_source_segment(src, node)
     assert body_src is not None
     assert "DEFAULT_LOW_LEVEL_CKPT" not in body_src
-    assert "go2_action_scale_table()" in body_src  # legacy 面占位保持
+    # legacy 面占位保持（[cyberdog2-kick] 阶段二：换分派单点
+    # action_scale_table_for("go2")，行为同旧 go2_action_scale_table()）
+    assert 'action_scale_table_for("go2")' in body_src
 
 
 if __name__ == "__main__":  # pragma: no cover

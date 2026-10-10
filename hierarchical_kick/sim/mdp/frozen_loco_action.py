@@ -36,10 +36,17 @@
 # 字段注解求值早于 isaaclab.envs 完整初始化，runtime 注解会 NameError；
 # 本文件 ``from __future__ import annotations`` 全程生效）。
 #
-# 【无时间抽象 / action repeat 说明】本 term 为 50Hz 逐步命令：低层在每个
-# sim 子步（decimation 内 4 次/环境步）重观测并重算关节目标，命令 buffer
-# 逐子步覆写——与训练面 JointPositionAction 的子步写入语义对齐，公平性
-# 「差异只在动作接口」。无 ASE 式 6Hz 低频命令 + 5 步 hold 的时间抽象。
+# 【无时间抽象 / action repeat 说明】本 term 为 50Hz 逐步命令：低层观测重算
+# 频率由 ``low_level_compute_per_substep`` 分派——
+#   True（缺省 = go2 历史语义）：每个 sim 子步（decimation 内 4 次/环境步）
+#     重观测重算关节目标（200Hz 反应环；go2 Implicit kp40 在此语义下验证
+#     ——WALK/H/I/X-HK5 全链）；
+#   False（cyberdog2）：每环境步一次（process_actions 期计算，apply 期只
+#     重写存储目标——与低层 50Hz 训练采样率对齐）。**cyberdog2 实证必须
+#     False**：kp25 DCMotor 饱和曲线在 |qd|→velocity_limit(31) 时力矩→0，
+#     200Hz 反应环遇饱和即 whiplash 振荡（qd 钳 ±31 不衰减 → 腿折叠 Sag
+#     → robot_fallen；diag 实测 2it 零命令 ep_len≈13-16 步、qd 恒钳 31），
+#     50Hz 语义同一 ckpt 零摔 150 步（[cyberdog2-kick] deviation 在案）。
 #
 # 【命令 resample 竞争分析】ManagerBasedRLEnv.step 时序：apply_actions（写
 # 命令 buffer，decimation 循环内）→ 终止/奖励 → reset（command_manager.
@@ -209,13 +216,19 @@ class FrozenLocoJointPositionAction(ActionTerm):
         # -- 组装函数分派（official 缺省布局 / legacy 旧布局） --
         self._assemble = (assemble_low_level_obs if self._convention == "official"
                           else assemble_low_level_obs_legacy)
+        # -- 低层计算频率分派（见模块头 action repeat 说明；缺省 True =
+        #    go2 历史语义零变化；cyberdog2 kick 面 cfg 显式 False） --
+        self._per_substep = bool(getattr(cfg, "low_level_compute_per_substep",
+                                         True))
         # -- 命令 term 引用（懒解析：action manager 构造先于 command manager，
-        #    ctor 期 env.command_manager 尚不存在——apply_actions 首步解析） --
+        #    ctor 期 env.command_manager 尚不存在——首次 compute 期解析） --
         self._cmd_term = None
         _it = ckpt_full.get("iter", "?")
         print(f"[upper] 冻结低层装载完成（{self._convention}）: {path} "
               f"(iter={_it}, hidden={hidden_dims}, obs={LOW_LEVEL_OBS_DIM} 维"
-              f"契约 deterministic；50Hz 逐步命令，无时间抽象)")
+              f"契约 deterministic；低层计算频率="
+              f"{'每子步200Hz' if self._per_substep else '每环境步50Hz'}，"
+              f"无时间抽象)")
 
     # ------------------------------------------------------------------ #
     # Properties（ActionTerm 抽象面；action_dim = 3 命令维）
@@ -249,16 +262,27 @@ class FrozenLocoJointPositionAction(ActionTerm):
     # Operations
     # ------------------------------------------------------------------ #
     def process_actions(self, actions: torch.Tensor):
-        """存 raw [N,3] 命令（每环境步一次）。"""
+        """存 raw [N,3] 命令（每环境步一次）；per-step 模式在此计算低层。"""
         self._raw_actions[:] = actions.to(self.device)
+        if not self._per_substep:
+            # 50Hz 语义：观测+前向+关节目标每环境步一次（process 期状态 =
+            # 上一步末状态，与 apply 首子步所见一致）；apply 期只重写目标
+            self._compute_low_level()
 
     def apply_actions(self):
-        """命令写入 → 低层 obs 组装 → 冻结 forward → 关节目标入 sim。
+        """命令写入 → 低层 → 关节目标入 sim（频率按 _per_substep 分派）。"""
+        if self._per_substep:
+            # 200Hz 历史语义：每 sim 子步重观测重算（go2 验证面）
+            self._compute_low_level()
+        # 关节目标写入 sim（per-step 模式下重写存储目标，子步保持）
+        self._asset.set_joint_position_target(
+            self._joint_targets, joint_ids=self._joint_ids)
 
-        每 sim 子步调用（decimation 内 4 次/环境步）：低层每子步重观测
-        重算（50Hz 逐步命令，无时间抽象）——与训练面关节目标子步覆写语义
-        对齐；deterministic 下 4 次输出随最新观测微更新，命令 buffer 同值
-        覆写幂等。
+    def _compute_low_level(self):
+        """命令写入 buffer → 低层 obs 组装 → 冻结 forward → 关节目标。
+
+        per-substep 模式每 sim 子步调用（4 次/环境步）；per-step 模式在
+        process_actions 每环境步调用一次——两模式共享同一管线本体。
         """
         # 命令 term 懒解析（构造序：action manager 先于 command manager）
         if self._cmd_term is None:
@@ -284,12 +308,10 @@ class FrozenLocoJointPositionAction(ActionTerm):
             low_out = self._low_policy(
                 {"policy": self._low_obs}, stochastic_output=False)
         self._low_last_action.copy_(low_out)
-        # ④ 关节目标 = default + scale ⊙ 输出 → sim
-        #    （JointPositionAction 语义；frozen_loco_math 纯公式）
+        # ④ 关节目标 = default + scale ⊙ 输出（JointPositionAction 语义；
+        #    frozen_loco_math 纯公式）——写入 sim 在 apply_actions
         self._joint_targets = joint_target_from_low_action(
             self._offset, self._scale_vec, low_out)
-        self._asset.set_joint_position_target(
-            self._joint_targets, joint_ids=self._joint_ids)
 
     def reset(self, env_ids=None) -> None:
         """env reset 语义：raw 命令 + 低层 last_action 清零（低层 obs 的
@@ -333,6 +355,12 @@ class FrozenLocoJointPositionActionCfg(ActionTermCfg):
     command_term_name: str = "base_velocity"
     """命令写入目标 term 名（CommandManager.get_term 键 = commands cfg
     字段名；Go2KickFlatEnvCfgCommand 恢复的 base_velocity 面）。"""
+
+    low_level_compute_per_substep: bool = True
+    """低层计算频率（True = 每 sim 子步 200Hz 反应环，go2 历史语义缺省；
+    False = 每环境步 50Hz——与低层训练采样率对齐。cyberdog2 kick 面必须
+    False：kp25 DCMotor 速度饱和 + 200Hz 反应环 = whiplash 失稳，实证见
+    模块头 action repeat 说明）。"""
 
     def __post_init__(self):
         # 缺省面（None 占位 → 字段缺省；configclass 注解经

@@ -36,13 +36,20 @@ from collections import Counter
 
 # ① 显式注册拉起（字符串懒加载；与 train.py 同款）
 import hierarchical_kick.tasks  # noqa: F401
-from hierarchical_kick.tasks import KICK_CMD_TASK_ID
+from hierarchical_kick.tasks import (
+    KICK_CMD_CYBERDOG2_TASK_ID,
+    KICK_CMD_TASK_ID,
+)
 
 parser = argparse.ArgumentParser(
     description="U-Kick cmd ckpt 行为 eval（kick_count/goal/ball_speed/"
                 "behind_frac/falls/ep_len；deterministic mean）")
-parser.add_argument("--task", type=str, default=KICK_CMD_TASK_ID,
-                    help="Gym task id（hierarchical_kick.tasks 注册）")
+parser.add_argument("--robot", type=str, default="go2",
+                    choices=["go2", "cyberdog2"],
+                    help="本体 profile（分派 task/低层 ckpt 缺省/关节序契约）")
+parser.add_argument("--task", type=str, default=None,
+                    help="Gym task id（缺省按 --robot 分派；显式给定时须与"
+                         " --robot 一致）")
 parser.add_argument("--checkpoint", type=str, required=True,
                     help="上层 policy ckpt（model_*.pt；train.py 产物）")
 parser.add_argument("--num_envs", type=int, default=64)
@@ -79,18 +86,24 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # --- launch 缺省分流 + 守卫（与 train.py 逐款同源） ---------------------- #
-if args_cli.task != KICK_CMD_TASK_ID:
+_TASK_BY_ROBOT = {"go2": KICK_CMD_TASK_ID,
+                  "cyberdog2": KICK_CMD_CYBERDOG2_TASK_ID}
+if args_cli.task is None:
+    args_cli.task = _TASK_BY_ROBOT[args_cli.robot]
+elif args_cli.task != _TASK_BY_ROBOT[args_cli.robot]:
     raise SystemExit(
-        f"[hkick][eval] 仅支持 cmd 任务 id: {KICK_CMD_TASK_ID}"
+        f"[hkick][eval] --task 与 --robot 不一致: robot={args_cli.robot} "
+        f"须 task {_TASK_BY_ROBOT[args_cli.robot]}"
         f"（收到 --task {args_cli.task}）")
 from hierarchical_kick.frozen_weights import (  # noqa: E402
     DEFAULT_LOW_LEVEL_CKPT,
-    DEFAULT_LOW_LEVEL_CKPT_OFFICIAL,
+    default_low_level_ckpt_official,
 )
 if args_cli.low_level_ckpt is None:
-    args_cli.low_level_ckpt = (DEFAULT_LOW_LEVEL_CKPT_OFFICIAL
-                               if args_cli.low_level_convention == "official"
-                               else DEFAULT_LOW_LEVEL_CKPT)
+    args_cli.low_level_ckpt = (
+        default_low_level_ckpt_official(args_cli.robot)
+        if args_cli.low_level_convention == "official"
+        else DEFAULT_LOW_LEVEL_CKPT)
 _low_path = os.path.abspath(args_cli.low_level_ckpt)
 if not os.path.isfile(_low_path):
     raise SystemExit(f"[hkick][eval] 低层 ckpt 不存在: {_low_path}")
@@ -117,11 +130,18 @@ from isaaclab_rl.rsl_rl import (  # noqa: E402
 from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
 from hierarchical_kick.core.kick_metrics import KickMetricsTracker  # noqa: E402
-from hierarchical_kick.robots.go2 import GO2_JOINT_ORDER_IL  # noqa: E402
+from hierarchical_kick.robots import (  # noqa: E402
+    CYBERDOG2_JOINT_ORDER_IL,
+    GO2_JOINT_ORDER_IL,
+)
 from hierarchical_kick.utils.parse_cfg import parse_env_cfg  # noqa: E402
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
+# 关节序契约面（robot 分派；train.py 同源）
+_JOINT_ORDER_BY_ROBOT = {"go2": GO2_JOINT_ORDER_IL,
+                         "cyberdog2": CYBERDOG2_JOINT_ORDER_IL}
 
 # 终止归因优先级（进球/出球优先于摔/超时；fall 口径 = robot_fallen |
 # base_contact——真摔两支，time_out / 场界不算）
@@ -160,7 +180,12 @@ def main() -> None:
               "（eval 时段课程计数从 0 起，d_max≈起点 0.5m 域）")
 
     # 2) agent cfg（仅作 runner 构造面；训练超参不消费） ------------------- #
-    from hierarchical_kick.agents import UpperKickCmdPPORunnerCfg as _RunnerCfg
+    if args_cli.robot == "go2":
+        from hierarchical_kick.agents import (
+            UpperKickCmdPPORunnerCfg as _RunnerCfg)
+    else:
+        from hierarchical_kick.agents import (
+            UpperCyberDog2KickCmdPPORunnerCfg as _RunnerCfg)
     agent_cfg = _RunnerCfg()
     agent_cfg.run_name = "eval_kick"
     agent_cfg.seed = int(args_cli.seed)
@@ -174,8 +199,10 @@ def main() -> None:
     env.reset()
     sim_env = env.unwrapped
     joint_names = list(sim_env.scene["robot"].joint_names)
-    if set(joint_names) != set(GO2_JOINT_ORDER_IL):
-        raise SystemExit(f"[hkick][eval] env 关节集合漂移: {joint_names}")
+    expected_joints = _JOINT_ORDER_BY_ROBOT[args_cli.robot]
+    if set(joint_names) != set(expected_joints):
+        raise SystemExit(f"[hkick][eval] env 关节集合漂移: {joint_names} != "
+                         f"{list(expected_joints)}")
     gdim = {str(k): int(v[-1]) for k, v in
             sim_env.observation_manager.group_obs_dim.items()}
     from hierarchical_kick.core.kick_metrics import \

@@ -6,18 +6,22 @@ torch）：本模块保留 re-export 兼容 post-launch 消费面
 （frozen_loco_action / 测试锚）与既有 import 路径。
 
 路径常量单源（frozen_loco_action / scripts.train 共同消费）：
-  - official → weights/velocity_flat_official/model_walk.pt
-    （HK-Velocity-Flat-Unitree-Go2-v0 训练产物）
-  - legacy   → weights/model_2999.pt（旧契约冻结资产）
+  - official/go2       → weights/velocity_flat_official/model_walk.pt
+  - official/cyberdog2 → weights/velocity_flat_official/cyberdog2/model_walk.pt
+  - legacy             → weights/model_2999.pt（旧契约冻结资产）
 """
 from __future__ import annotations
 
 from hierarchical_kick.frozen_weights import (  # noqa: F401
     DEFAULT_LOW_LEVEL_CKPT,
     DEFAULT_LOW_LEVEL_CKPT_OFFICIAL,
+    DEFAULT_LOW_LEVEL_CKPT_OFFICIAL_CYBERDOG2,
+    default_low_level_ckpt_official,
 )
 
 __all__ = [
     "DEFAULT_LOW_LEVEL_CKPT_OFFICIAL",
+    "DEFAULT_LOW_LEVEL_CKPT_OFFICIAL_CYBERDOG2",
     "DEFAULT_LOW_LEVEL_CKPT",
+    "default_low_level_ckpt_official",
 ]

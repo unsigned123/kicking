@@ -69,8 +69,9 @@ from hierarchical_kick.core.contracts import (
     SCALE_BASE_ANG_VEL,
     SCALE_JOINT_VEL,
 )
+from hierarchical_kick.core.scale_vec import action_scale_table_for
+from hierarchical_kick.robots import CYBERDOG2_FOOT_BODIES, make_cyberdog2_track_profile
 from hierarchical_kick.robots.go2 import GO2_FOOT_BODIES
-from hierarchical_kick.core.scale_vec import go2_action_scale_table
 from hierarchical_kick.sim import mdp
 from hierarchical_kick.sim.flat_env_cfg import UnitreeGo2FlatEnvCfg, UpperPolicyCfg
 from hierarchical_kick.sim.mdp.frozen_loco_action import (
@@ -588,11 +589,123 @@ class Go2KickFlatEnvCfgCommand(Go2KickFlatEnvCfg):
         self.actions.joint_pos = FrozenLocoJointPositionActionCfg(
             asset_name="robot",
             joint_names=[".*"],
-            scale=go2_action_scale_table(),
+            scale=action_scale_table_for("go2"),
         )
 
         # obs 组：actions 项换低层 last_action（55 维契约保持；其余零改动）
         self.observations.policy = KickPolicyCfgCmd()
+
+
+# ---------------------------------------------------------------------------
+# cyberdog2 本体置换（kick 面接入；go2 kick 链全部适配点逐项对账）
+#
+# go2 耦合点清单（Go2KickFlatEnvCfg 继承链逐项）→ cyberdog2 处置：
+#   C1) scene.robot：make_go2_track_profile（Implicit kp40/d1、spawn z0.42、
+#       站高 0.227）→ make_cyberdog2_track_profile（DCMotor kp25/d0.5/
+#       effort 12、spawn z0.30、FK 站高 0.236——与 velocity 低层 r12 ckpt
+#       训练装配同参同源，kick env 执行器契约 = 低层执行器契约）；
+#   C2) 狗 spawn xy/yaw：_dog_init pos/rot 覆写在父链打到 go2 cfg 实例上
+#       ——本体置换**重建 robot cfg**，须在本体后重放（z 沿 cyberdog2
+#       profile 现款 0.30，xy/yaw = mdp.DOG_SPAWN_XY + π/2 同款）；
+#   C3) ball 接触 filter：Robot/base + GO2_FOOT_BODIES → Robot/body +
+#       CYBERDOG2_FOOT_BODIES（足端 FL/FR/RL/RR_foot 同名面；base 名异）；
+#   C4) events body names：add_base_mass / base_external_force_torque 的
+#       "base" → "body"（cyberdog2 root link 名）；
+#   C5) terminations.base_contact sensor body_names "base" → "body"；
+#   C6) robot_fallen 高度阈值：终止 + 惩罚两处 params 同源覆写 0.16 →
+#       CYBERDOG2_FALLEN_BODY_Z_THRESHOLD（0.20；依据见 ball_mdp 常量
+#       docstring——xiaomi 0.28 基准 + FK 站高 0.236 + 探针步态波谷证据）；
+#   C7) actions scale 表：go2 表 → cyberdog2 表（xiaomi deploy 快照
+#       uniform 0.25；official 约定不消费——仅 legacy 口径值面就位）；
+#   C8) 低层计算频率 per-substep→per-step（50Hz 与低层训练采样率对齐）：
+#       kp25 DCMotor 速度饱和（|qd|→31 时力矩→0）+ 200Hz 反应环 = whiplash
+#       失稳（diag 实测：2it 零命令 ep_len≈13-16 步、qd 恒钳 ±31、body_z
+#       Sag 0.236→0.17 折叠致死；50Hz 同 ckpt 零摔 150 步 body_z 0.23-0.25）
+#       ——[cyberdog2-kick] deviation 在案；go2 面保持历史 200Hz 语义不动。
+#   无需改：contact_forces prim_path 已 "Robot/.*"（vendored 基座，嵌套
+#   prim 树即匹配）；feet_air_time/undesired_contacts 已被 kick 面 None；
+#   球物理/obs 55 维/奖励权重/课程几何本体无关；behind_offset 0.45 ≈
+#   2×站高比例在双本体下偏差 <5%（go2 0.45/0.227=1.98 vs cyber 0.45/0.236
+#   =1.91），几何面沿用不调。
+# ---------------------------------------------------------------------------
+
+
+def _apply_cyberdog2_body_swap(cfg: "Go2KickFlatEnvCfg") -> None:
+    """go2→cyberdog2 本体置换（C1-C6；训练面/cmd 面共用单点）。
+
+    在父链 ``__post_init__()`` 完成后调用：整只替换 scene.robot、重放狗
+    spawn 常量（C2）、换球接触 filter 与 events/终止 body names、覆写
+    robot_fallen 高度阈值（终止 + 奖励两处同源）。
+    """
+    # C1 本体置换（profile 内含 spawn z0.30 + DCMotor kp25 契约 + soft
+    #    limit 0.9；与 velocity 面装配同款——低层 ckpt 执行器契约同参）
+    _profile = make_cyberdog2_track_profile(prim_path="{ENV_REGEX_NS}/Robot")
+    _profile.articulation_cfg.soft_joint_pos_limit_factor = 0.9
+    cfg.scene.robot = _profile.articulation_cfg
+
+    # C2 狗 spawn 常量重放（父链打到旧 go2 cfg 实例上；z 沿 profile 现款）
+    _dog_init = cfg.scene.robot.init_state
+    _dog_init.pos = (mdp.DOG_SPAWN_XY[0], mdp.DOG_SPAWN_XY[1],
+                     float(_dog_init.pos[2]))
+    _dog_init.rot = DOG_SPAWN_YAW_QUAT_XYZW
+
+    # C3 球接触 filter（base→body + cyberdog2 足端；显式枚举理由同 go2 面）
+    cfg.scene.ball_contact_forces.filter_prim_paths_expr=[
+        "{ENV_REGEX_NS}/Robot/body",
+        *[f"{{ENV_REGEX_NS}}/Robot/{b}" for b in CYBERDOG2_FOOT_BODIES],
+    ]
+
+    # C4/C5 events + 终止 body names（root link 名 body）
+    cfg.events.add_base_mass.params["asset_cfg"].body_names = "body"
+    cfg.events.base_external_force_torque.params["asset_cfg"]\
+        .body_names = "body"
+    cfg.terminations.base_contact.params["sensor_cfg"].body_names = "body"
+
+    # C6 robot_fallen 高度阈值 0.20（终止 + 惩罚两处同源；0.16→0.20 依据
+    #    见 mdp.CYBERDOG2_FALLEN_BODY_Z_THRESHOLD docstring）
+    cfg.terminations.robot_fallen.params["body_z_threshold"] = \
+        mdp.CYBERDOG2_FALLEN_BODY_Z_THRESHOLD
+    cfg.rewards.robot_fallen.params["body_z_threshold"] = \
+        mdp.CYBERDOG2_FALLEN_BODY_Z_THRESHOLD
+
+
+@configclass
+class CyberDog2KickFlatEnvCfg(Go2KickFlatEnvCfg):
+    """cyberdog2 U-Kick 球 env 训练面。
+
+    go2 kick 训练面（Go2KickFlatEnvCfg）全部适配 + 本体置换（C1-C6，见
+    文件尾 cyberdog2 段头表）：球物理/obs 55 维/奖励权重单源/终止结构/
+    课程全部继承零改动——差异只在**本体资产与本体绑定名**（执行器契约与
+    velocity 低层 ckpt 训练装配同参：DCMotor kp25/d0.5/effort 12 +
+    default_q + PhysX 关节序 CYBERDOG2_JOINT_ORDER_IL）。
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        _apply_cyberdog2_body_swap(self)
+
+
+@configclass
+class CyberDog2KickFlatEnvCfgCommand(Go2KickFlatEnvCfgCommand):
+    """cyberdog2 cmd「真分层」面（任务 Isaac-Kick-Flat-CyberDog2-Upper-Cmd-v0）。
+
+    go2 cmd 面（Go2KickFlatEnvCfgCommand）全部差异只在动作接口的分层
+    （3 维命令 → 冻结低层 → 关节目标）+ 本体置换（C1-C6）+ 动作 scale 表
+    换 cyberdog2（C7——official 约定不消费该表，均匀 0.5；
+    legacy 口径值面就位）。低层 ckpt 缺省按 robot 分派（frozen_weights：
+    cyberdog2 → weights/velocity_flat_official/cyberdog2/model_walk.pt，
+    launch 期 train.py --robot 注入）。
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        _apply_cyberdog2_body_swap(self)
+        # C7 动作 scale 表换 cyberdog2（父链已挂 go2 表——official 约定
+        #    不消费仅打印提示；legacy 口径须本表）
+        self.actions.joint_pos.scale = action_scale_table_for("cyberdog2")
+        # C8 低层计算频率 → 每环境步 50Hz（kp25 饱和 + 200Hz 反应环失稳
+        #    实证；见文件尾 C8 注与 frozen_loco_action 模块头）
+        self.actions.joint_pos.low_level_compute_per_substep = False
 
 
 __all__ = [
@@ -603,4 +716,6 @@ __all__ = [
     "Go2KickFlatEnvCfgOracle",
     "KickPolicyCfgCmd",
     "Go2KickFlatEnvCfgCommand",
+    "CyberDog2KickFlatEnvCfg",
+    "CyberDog2KickFlatEnvCfgCommand",
 ]

@@ -129,6 +129,25 @@ go2 站高 0.227（flat 链 root_height 阈值 0.15 的同一站高参考）→ 
 0.16 余量 0.067m ≈ 30% 站高：蹲伏步态的质心波谷不误杀，瘫倒/侧翻必触发。
 （双条件之一即摔，与重力支互补——直立姿态下被压低的高度由本支兜底。）"""
 
+CYBERDOG2_FALLEN_BODY_Z_THRESHOLD = 0.17
+"""cyberdog2 摔判定 body 高度阈值（kick 面本体置换时覆写 body_z_threshold
+用；go2 面保持 FALLEN_BODY_Z_THRESHOLD=0.16 不动）。
+
+依据（探针实测标定，owner 建议值 0.20 被证据否决降档——[cyberdog2-kick]
+deviation 在案）：
+  - owner 建议 0.20（xiaomi body_height_penalty 基准 0.28 × ~71%）——
+    **r12c 续训 model_2999 探针实测否决**：纯步态（无球、cmd 0.4 直行
+    250 步）body_z **min=0.1839**（含 reset 落地 settle 弹跳；mean 0.2336
+    ≈ FK 站高 0.236）——0.20 阈会误杀正常步态波谷与每次 reset 的落地
+    瞬态（kick 面 500 步集、reset 频繁，settle 瞬态暴露面大）；
+  - 本 URDF（xiaomi 同 md5 资产）FK 站高 ≈0.236m（thigh 0.12×cos0.8 +
+    shank 0.17391×cos0.7 + 足球 r0.019；xiaomi 报文"站立 0.40"实为其
+    spawn z 非 FK 站高）→ 0.17 = 72% 站高（对齐 go2 口径 0.16/0.227
+    = 70%），比实测步态波谷 min 低 0.014m；
+  - 真摔底线：cyberdog2 侧翻躺平时 body_z ≈ 机身半高 0.09-0.10——0.17
+    距真摔态 0.07m 裕度，瘫倒/侧翻必触发；重力支（倾斜 >60°）不变，
+    仍为翻倒面主判据。"""
+
 ROBOT_FIELD_X_MIN = -1.0
 ROBOT_FIELD_X_MAX = 5.0
 ROBOT_FIELD_Y_MIN = -4.0
@@ -980,6 +999,7 @@ __all__ = [
     "BALL_MASS",
     "FALLEN_GRAV_THRESHOLD",
     "FALLEN_BODY_Z_THRESHOLD",
+    "CYBERDOG2_FALLEN_BODY_Z_THRESHOLD",
     "ROBOT_FIELD_X_MIN",
     "ROBOT_FIELD_X_MAX",
     "ROBOT_FIELD_Y_MIN",

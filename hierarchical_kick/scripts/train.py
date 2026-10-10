@@ -6,9 +6,18 @@ rsl_rl OnPolicyRunner）：上层 RL 策略动作空间 = 3 维机体系速度�
 （deterministic mean）每步把命令转成 12 维关节目标（env 侧
 FrozenLocoJointPositionAction 消费）。
 
-冻结低层 ckpt 缺省按 ``--low_level_convention`` 分派（official →
-包内 ``weights/velocity_flat_official/model_walk.pt``（官方口径产物）；
-legacy → ``weights/model_2999.pt`` 旧契约；--low_level_ckpt 可覆写）。
+冻结低层 ckpt 缺省按 ``--low_level_convention``/``--robot`` 分派
+（official/go2 → 包内 ``weights/velocity_flat_official/model_walk.pt``、
+official/cyberdog2 → ``weights/velocity_flat_official/cyberdog2/
+model_walk.pt``（官方口径产物）；legacy → ``weights/model_2999.pt`` 旧
+契约；--low_level_ckpt 可覆写）。
+
+--robot 分派（缺省 go2 = 历史路径零变化）：
+    go2        → Isaac-Kick-Flat-Unitree-Go2-Upper-Cmd-v0
+                 （Go2KickFlatEnvCfgCommand）
+    cyberdog2  → Isaac-Kick-Flat-CyberDog2-Upper-Cmd-v0
+                 （CyberDog2KickFlatEnvCfgCommand；本体置换 C1-C7 见
+                 ball_env_cfg 尾段表；低层 ckpt = 阶段一过门产物）
 
 用法（包根目录）::
 
@@ -27,13 +36,20 @@ from datetime import datetime
 
 # ① 显式注册拉起（字符串懒加载，零 eager 导入；离线无 gymnasium 静默跳过）
 import hierarchical_kick.tasks  # noqa: F401
-from hierarchical_kick.tasks import KICK_CMD_TASK_ID
+from hierarchical_kick.tasks import (
+    KICK_CMD_CYBERDOG2_TASK_ID,
+    KICK_CMD_TASK_ID,
+)
 
 parser = argparse.ArgumentParser(
     description="U-Kick「真分层」train upper RL policy"
                 "（3 维速度命令 + 冻结低层）")
-parser.add_argument("--task", type=str, default=KICK_CMD_TASK_ID,
-                    help="Gym task id（hierarchical_kick.tasks 注册）")
+parser.add_argument("--robot", type=str, default="go2",
+                    choices=["go2", "cyberdog2"],
+                    help="本体 profile（分派 task/低层 ckpt 缺省/关节序契约）")
+parser.add_argument("--task", type=str, default=None,
+                    help="Gym task id（缺省按 --robot 分派；显式给定时须与"
+                         " --robot 一致，否则 fail-fast）")
 parser.add_argument("--num_envs", type=int, default=None)
 parser.add_argument("--seed", type=int, default=None)
 parser.add_argument("--max_iterations", type=int, default=None)
@@ -78,11 +94,15 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
 # --- launch 缺省分流 + 守卫（AppLauncher 拉起前 fail-fast） ---- #
-# 单 task 面：非 cmd task id 一律拒绝。
-if args_cli.task != KICK_CMD_TASK_ID:
+# robot → task id 分派单源（tasks 注册字符串面同源）
+_TASK_BY_ROBOT = {"go2": KICK_CMD_TASK_ID,
+                  "cyberdog2": KICK_CMD_CYBERDOG2_TASK_ID}
+if args_cli.task is None:
+    args_cli.task = _TASK_BY_ROBOT[args_cli.robot]
+elif args_cli.task != _TASK_BY_ROBOT[args_cli.robot]:
     raise SystemExit(
-        f"[hkick] 仅支持 cmd 任务 id: {KICK_CMD_TASK_ID}"
-        f"（收到 --task {args_cli.task}）")
+        f"[hkick] --task 与 --robot 不一致: robot={args_cli.robot} 须 task "
+        f"{_TASK_BY_ROBOT[args_cli.robot]}（收到 --task {args_cli.task}）")
 # 冻结资产路径守卫（约定分派缺省 + 存在性 fail-fast）。
 # pre-launch 零 torch 纪律：经 core/weights import 会
 # 触发 core/__init__ eager 拉起 torch/rsl_rl——Kit 110 对 preloaded torch
@@ -90,22 +110,25 @@ if args_cli.task != KICK_CMD_TASK_ID:
 # 模块 frozen_weights（core/weights 保持 re-export 单源）。
 from hierarchical_kick.frozen_weights import (  # noqa: E402
     DEFAULT_LOW_LEVEL_CKPT,
-    DEFAULT_LOW_LEVEL_CKPT_OFFICIAL,
+    default_low_level_ckpt_official,
 )
 if args_cli.low_level_ckpt is None:
-    args_cli.low_level_ckpt = (DEFAULT_LOW_LEVEL_CKPT_OFFICIAL
-                               if args_cli.low_level_convention == "official"
-                               else DEFAULT_LOW_LEVEL_CKPT)
+    args_cli.low_level_ckpt = (
+        default_low_level_ckpt_official(args_cli.robot)
+        if args_cli.low_level_convention == "official"
+        else DEFAULT_LOW_LEVEL_CKPT)
 _low_path = os.path.abspath(args_cli.low_level_ckpt)
 if not os.path.isfile(_low_path):
     raise SystemExit(
         f"[hkick] 低层 ckpt 不存在: {_low_path}"
         f"（--low_level_convention={args_cli.low_level_convention} 的包内"
-        "缺省或 --low_level_ckpt 显式路径；official → "
-        "hierarchical_kick/weights/velocity_flat_official/、legacy → "
-        "hierarchical_kick/weights/model_2999.pt）")
+        "缺省或 --low_level_ckpt 显式路径；official → go2 "
+        "weights/velocity_flat_official/model_walk.pt / cyberdog2 "
+        "weights/velocity_flat_official/cyberdog2/model_walk.pt、legacy → "
+        "weights/model_2999.pt）")
 print(f"[hkick] 真分层（冻结低层）资产守卫通过: {_low_path} "
-      f"(convention={args_cli.low_level_convention})")
+      f"(robot={args_cli.robot}, "
+      f"convention={args_cli.low_level_convention})")
 
 # 训练一律 headless（服务器无显示）
 args_cli.headless = True
@@ -130,11 +153,18 @@ from isaaclab_rl.rsl_rl import (  # noqa: E402
 )
 from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
-from hierarchical_kick.robots.go2 import GO2_JOINT_ORDER_IL  # noqa: E402
+from hierarchical_kick.robots import (  # noqa: E402
+    CYBERDOG2_JOINT_ORDER_IL,
+    GO2_JOINT_ORDER_IL,
+)
 from hierarchical_kick.utils.parse_cfg import (  # noqa: E402
     get_checkpoint_path,
     parse_env_cfg,
 )
+
+# 关节序契约面（robot 分派；与 velocity 面 train_velocity.py 同源常量）
+_JOINT_ORDER_BY_ROBOT = {"go2": GO2_JOINT_ORDER_IL,
+                         "cyberdog2": CYBERDOG2_JOINT_ORDER_IL}
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -202,8 +232,13 @@ def main() -> None:
     for _f in _dc_fields(_w):
         print(f"    {_f.name:<26s} = {getattr(_w, _f.name)}")
 
-    # 2) agent cfg --------------------------------------------------------- #
-    from hierarchical_kick.agents import UpperKickCmdPPORunnerCfg as _RunnerCfg
+    # 2) agent cfg（robot 分派：cyberdog2 = 同 PPO 面换 experiment 隔离） -- #
+    if args_cli.robot == "go2":
+        from hierarchical_kick.agents import (
+            UpperKickCmdPPORunnerCfg as _RunnerCfg)
+    else:
+        from hierarchical_kick.agents import (
+            UpperCyberDog2KickCmdPPORunnerCfg as _RunnerCfg)
     agent_cfg = _RunnerCfg()
     if args_cli.max_iterations:
         agent_cfg.max_iterations = int(args_cli.max_iterations)
@@ -279,15 +314,16 @@ def main() -> None:
     env.reset()  # scene spawn 完成（joint_names / group_obs_dim 可读面）
     sim_env = env.unwrapped
     joint_names = list(sim_env.scene["robot"].joint_names)
+    expected_joints = _JOINT_ORDER_BY_ROBOT[args_cli.robot]
     print(f"[hkick] kick env joint order ({len(joint_names)}): {joint_names}")
-    if set(joint_names) != set(GO2_JOINT_ORDER_IL):
+    if set(joint_names) != set(expected_joints):
         raise SystemExit(
             f"[hkick] env 关节集合漂移: {joint_names} != "
-            f"{list(GO2_JOINT_ORDER_IL)}（fail-fast）")
-    if joint_names != list(GO2_JOINT_ORDER_IL):
-        print(f"[hkick][WARN] 关节序与 GO2_JOINT_ORDER_IL 有序差 "
-              f"{joint_names} vs {list(GO2_JOINT_ORDER_IL)}"
-              "（scale_vec/std_param 槽位序按 GO2_JOINT_ORDER_IL，请核对）")
+            f"{list(expected_joints)}（fail-fast）")
+    if joint_names != list(expected_joints):
+        print(f"[hkick][WARN] 关节序与注册表预测序有序差 "
+              f"{joint_names} vs {list(expected_joints)}"
+              "（scale_vec/std_param 槽位序按注册表序，请核对）")
     gdim = {str(k): int(v[-1]) for k, v in
             sim_env.observation_manager.group_obs_dim.items()}
     print("[hkick] runtime group_obs_dim:", gdim)

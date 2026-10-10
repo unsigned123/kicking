@@ -328,7 +328,8 @@ def test_command_env_cfg_source_contract():
     assert "self.commands.base_velocity = mdp.UniformVelocityCommandCfg(" in body_src
     # 动作项替换（冻结低层 ActionTerm + scale_vec 单源）
     assert "self.actions.joint_pos = FrozenLocoJointPositionActionCfg(" in body_src
-    assert "go2_action_scale_table()" in body_src
+    # [cyberdog2-kick] 阶段二：换分派单点（行为同旧 go2_action_scale_table()）
+    assert 'action_scale_table_for("go2")' in body_src
     # obs 组替换（actions 项换源，55 维契约保持）
     assert "self.observations.policy = KickPolicyCfgCmd()" in body_src
     # 公平性：类体内**零**奖励/终止/球物理/episode 赋值（继承训练面不动）
@@ -467,11 +468,13 @@ def test_train_command_actor_wiring():
     src = _source(_RUN_UPPER_PATH)
     ast.parse(src)
     # 无 --actor argparse 分支；task 守卫指向 cmd 面
+    # （[cyberdog2-kick] 阶段二：单 task 拒绝 → robot/task 一致性守卫，
+    #   守卫面仍先于 AppLauncher）
     assert 'add_argument("--actor"' not in src
     assert "KICK_CMD_TASK_ID" in src
-    assert "仅支持 cmd 任务 id" in src
+    assert "--task 与 --robot 不一致" in src
     # 守卫先于 AppLauncher（launch 最早面 fail-fast）
-    guard_pos = src.index("仅支持 cmd 任务 id")
+    guard_pos = src.index("--task 与 --robot 不一致")
     launcher_pos = src.index("app_launcher = AppLauncher")
     assert guard_pos < launcher_pos
     # 低层 ckpt 参数化 + env cfg 注入 + 存在性守卫
