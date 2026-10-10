@@ -17,10 +17,11 @@ rc1 适配（相对 xiaomi 旧 cfg 逐字段）：
   - ``joint_sdk_names`` 自定义 ArticulationCfg 扩展字段不入本 profile
     （部署序契约放 metadata；训练面 obs/动作序 = PhysX 实际序）。
 
-关节序：CYBERDOG2_JOINT_ORDER_IL = PhysX BFS 预测序（深度分层 × 层内名序，
-go2 probed 范式：hip 深度1 → thigh 深度2 → calf 深度3）；URDF 树
-body→(head, 4×abad)→hip→knee→foot ⇒ abad/hip/knee 三层。首次 env build
-时 train_velocity.py 打印实际序并做集合 fail-fast（有序差仅告警）。
+关节序：CYBERDOG2_JOINT_ORDER_IL = PhysX 实际序（probed：URDF 树 BFS
+深度分层 abad→hip→knee；层内序 = URDF 声明序 FR,FL,RR,RL——首训 env
+build 实测）。SDK 序（FR-first 三连腿分组）仅 metadata 部署契约，训练面
+obs/动作序 = PhysX 序（策略端到端同序自洽，无需置换；与 kick 上层装配
+时的按名映射在装配层处理）。
 """
 from __future__ import annotations
 
@@ -33,11 +34,12 @@ from .robot_profile import RobotProfile
 _CYBERDOG2_ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets" / "cyberdog2"
 CYBERDOG2_URDF_PATH = _CYBERDOG2_ASSET_ROOT / "urdf" / "cyberdog2.urdf"
 
-# PhysX 实际关节序（BFS 预测；首次 env build 校验——见模块 docstring）
+# PhysX 实际关节序（probed：URDF→USD BFS 深度分层 abad→hip→knee；层内序
+# = URDF 声明序 FR,FL,RR,RL——首训 env build 实测回填，非字母序）
 CYBERDOG2_JOINT_ORDER_IL = [
-    "FL_abad_joint", "FR_abad_joint", "RL_abad_joint", "RR_abad_joint",
-    "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
-    "FL_knee_joint", "FR_knee_joint", "RL_knee_joint", "RR_knee_joint",
+    "FR_abad_joint", "FL_abad_joint", "RR_abad_joint", "RL_abad_joint",
+    "FR_hip_joint", "FL_hip_joint", "RR_hip_joint", "RL_hip_joint",
+    "FR_knee_joint", "FL_knee_joint", "RR_knee_joint", "RL_knee_joint",
 ]
 # SDK/部署序（FR-first，xiaomi CYBERDOG2_JOINT_SDK_NAMES 原序；仅 metadata 契约）
 CYBERDOG2_JOINT_ORDER_SDK = [

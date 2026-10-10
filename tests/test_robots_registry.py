@@ -68,9 +68,10 @@ def test_cyberdog2_joint_constants():
     # SDK 序 = FR-first（xiaomi CYBERDOG2_JOINT_SDK_NAMES 契约）
     assert CYBERDOG2_JOINT_ORDER_SDK[:3] == [
         "FR_abad_joint", "FR_hip_joint", "FR_knee_joint"]
-    # IL 预测序 = BFS 深度分层 × 层内名序（abad→hip→knee）
+    # IL 实测序 = probed：BFS 深度分层（abad→hip→knee）× 层内 URDF 声明序
+    # （FR,FL,RR,RL——首训 env build 实测回填，非字母序）
     assert CYBERDOG2_JOINT_ORDER_IL[:4] == [
-        "FL_abad_joint", "FR_abad_joint", "RL_abad_joint", "RR_abad_joint"]
+        "FR_abad_joint", "FL_abad_joint", "RR_abad_joint", "RL_abad_joint"]
 
 
 def test_cyberdog2_body_constants():
