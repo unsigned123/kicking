@@ -10,11 +10,16 @@ push/外力事件关），命令 term 逐步覆写常量；--ball 时 scene 挂�
 （kick env 同款：r0.11/m0.43/高阻尼），spawn 于行进方向 ball_x（缺省
 0.3m）处。
 
-**行走门**（三判据全过 = 会走）：
-  ① v_body ≥ 0.25 m/s（站桩 ≈0）
-  ② 步态振荡：对角大腿对（go2=thigh / cyberdog2=hip）joint_vel 符号翻转
-     >10 且 |mean| > 1 rad/s
-  ③ 推球位移 > 0.2 m（球 spawn 沿行进方向；段锚点 done 重锚）
+**行走门**：
+  无球（--no-ball）：
+    ① v_body 末 50 步均值 ≥ 0.25 m/s（站桩 ≈0）
+    ② 步态振荡：对角大腿对（go2=thigh / cyberdog2=hip）joint_vel 符号翻转
+       >10 且 |mean| > 1 rad/s
+  带球（缺省）：
+    ① 步态振荡（同上）
+    ② 推球位移 > 0.2 m（球 spawn 沿行进方向；段锚点 done 重锚）
+    ③ 无摔倒（done 即摔；球在场时 v_body 仅观测不设门——顶球蠕行相
+       末段速度≈0 属正常，不能作为行走判据）
 
 用法（dog env_isaaclab3，包根目录）::
 
@@ -214,6 +219,7 @@ def main() -> None:
     qd_hist: list = []
     v_body_hist: list = []
     body_z_hist: list = []
+    fallen = torch.zeros(args_cli.num_envs, dtype=torch.bool)
 
     def _obs() -> torch.Tensor:
         obs = obs_dict["policy"]
@@ -247,6 +253,7 @@ def main() -> None:
             else:
                 disp = None
             done_mask = dones.detach().to(torch.bool).reshape(-1)
+            fallen |= done_mask
             if bool(done_mask.any()):
                 _reanchor()  # done env 已 auto-reset → 重锚
             if step % int(args_cli.print_every) == 0 or step == 1:
@@ -266,9 +273,14 @@ def main() -> None:
     v_peak = float(max(v_body_hist))
     z_min = float(min(body_z_hist))
     z_mean = float(sum(body_z_hist) / len(body_z_hist))
+    n_falls = int(fallen.sum())
     print("\n==================== 行走门判定 ====================")
-    print(f"① v_body: 末 50 步均值={v_last:.4f} m/s  峰值={v_peak:.4f} "
-          f"（门 ≥0.25 → {'PASS' if v_last >= 0.25 else 'FAIL'}）")
+    if args_cli.ball:
+        print(f"① v_body: 末 50 步均值={v_last:.4f} m/s  峰值={v_peak:.4f} "
+              f"（球在场：仅观测，不设门——顶球蠕行相末段速度≈0 属正常）")
+    else:
+        print(f"① v_body: 末 50 步均值={v_last:.4f} m/s  峰值={v_peak:.4f} "
+              f"（门 ≥0.25 → {'PASS' if v_last >= 0.25 else 'FAIL'}）")
     print(f"② 步态振荡（{gait_joints[0]} qd）: |mean|={qd_mean:.3f} rad/s "
           f"std={float(qd[:, 0].std()):.3f} 符号翻转={flips}"
           f"（门 翻转>10 且 |mean|>1 → "
@@ -282,7 +294,9 @@ def main() -> None:
         d_max = float(final.max())
         print(f"③ 推球位移: max={d_max:.4f} m mean={float(final.mean()):.4f} "
               f"（门 >0.2 → {'PASS' if d_max > 0.2 else 'FAIL'}）")
-        gate = (v_last >= 0.25 and flips > 10 and qd_mean > 1.0 and d_max > 0.2)
+        print(f"④ 无摔倒: falls={n_falls}/{args_cli.num_envs} "
+              f"（门 0 → {'PASS' if n_falls == 0 else 'FAIL'}）")
+        gate = (flips > 10 and qd_mean > 1.0 and d_max > 0.2 and n_falls == 0)
     else:
         gate = (v_last >= 0.25 and flips > 10 and qd_mean > 1.0)
     print(f"\n>>> 行走门: {'**PASS**（会走）' if gate else '**FAIL**'}")

@@ -245,6 +245,8 @@ OMNI_KIT_ACCEPT_EULA=YES python hierarchical_kick/scripts/probe_velocity_walk.py
 
 实测参考：`v_body 末 50 步均值 0.290（有球）/ 0.391（无球）`、`峰值 0.554`、`步态振荡 PASS`。
 
+> **判据说明**：带球运行时**末段速度≈0 属正常**（高阻尼球顶着推的蠕行平衡，不是行走缺陷）。行走门的 v_body 判据只在**无球探针**（加 `--no-ball`）下生效；带球探针的门 = 步态振荡 + 推球位移 >0.2 m + 无摔倒。
+
 过门后把模型放进缺省位（踢球训练会自动加载它）：
 
 ```bash
