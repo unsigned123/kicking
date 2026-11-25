@@ -95,9 +95,9 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
 - **数据面完全复用模板话题**：`/absolute_pose/<dog_name>`（狗世界位姿，odom+VRPN
   5s 校准）、`/absolute_pose/ball`（球世界位姿，VRPN）、`/<dog_name>/odom_out`
   （机体速度）、`/vrpn/<obj>/pose|twist|accel`（原始动捕）。**无需自己写动捕驱动**。
-- **模板没有的两路输入**：`/joint_states` 与 `/imu/data`（我们的 55 维 obs 需要
-  12 关节 q/qd + 陀螺）。模板技能是几何式的所以不用；上机前需确认机器人上谁发布
-  这两路（cyberdog_ros2 或自建转发）。
+- **模板没有的两路输入**：`/joint_states` 与 `/imu/data`。**VP 协议已确认**：
+  Imu 与 Odometry 是官方能力（有消息源）；**JointState 不在能力清单**（详见 §6.2
+  的消融方案 a）。IMU 来源可从官方 Imu 消息接入，joint 需按 §6.2 处理。
 
 ## 6. ⚠️ 已知缺失与前置条件（联调前必读）
 
@@ -105,9 +105,16 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
    12 维动作输出；出厂控制器内部动作不可读。当前实现用
    `(q − q_default)/0.5` 作代理（`last_action_source: joint_deviation`）。若行为
    异常，建议在仿真侧做一次「去 last_action 通道」的消融重训，再部署无耦合版本。
-2. **关节状态来源未定**：出厂高层 LCM 不提供关节反馈。需确认机器人上
-   `cyberdog_ros2` 传感器节点是否发布 `/joint_states`（NX 板）；否则只能改用低层
-   SDK 的只读状态订阅（有进入电机模式的风险）或把节点部署到 NX 板。
+2. **关节状态：官方能力清单中不存在（已确认，不是待查项）**。VP 协议文档
+   （`cyberdog.motion/odometer/传感器`）提供 Odometry 与 Imu，但**没有 JointState**。
+   我们 55 维 obs 中有 36 维（12 joint_pos + 12 joint_vel + 12 last_action）因此
+   没有官方来源。三条出路：
+   a. **推荐**：仿真侧做「部署观测消融」——去掉 q/qd/last_action 三块，保留
+      ang_vel(3)+gravity(3)+linvel(3)+ball(3)+goal(4)+push(3)=**19 维**，重训上层
+      策略（仿真 2000it ≈ 30 分钟）后再部署，彻底绕开关节反馈依赖；
+   b. 低层面 motor SDK（cyberdog_motor_sdk CustomInterface）只读订阅 q/qd
+      （有进入电机控制模式的风险，需谨慎验证）；
+   c. 把节点部署到 NX 板并寻找内部关节话题（文档未公开，需现场探测）。
 3. **动捕面已按模板对齐（VRPN）**：`/absolute_pose/ball` 来自模板的
    `absolute_coordination`（VRPN → 世界系）。仍需做一次**场地标定**：设定
    `goal_center_xy`（球门在世界系坐标）并核对狗/球坐标一致。
