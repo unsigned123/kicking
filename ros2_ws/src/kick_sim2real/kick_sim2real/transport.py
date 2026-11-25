@@ -31,6 +31,56 @@ from typing import Callable, Optional
 import numpy as np
 
 
+GAITS = {
+    "slow": {"id": 303, "max_vx": 0.65, "max_vy": 0.3, "max_wz": 1.25},
+    "mid": {"id": 308, "max_vx": 1.0, "max_vy": 0.3, "max_wz": 1.25},
+    "fast": {"id": 305, "max_vx": 1.6, "max_vy": 0.55, "max_wz": 2.5},
+}
+"""出厂 ROS2 运控步态表（与 Machine-Dog 模板 move_local 同源）。"""
+
+
+def select_gait(vx: float, vy: float, wz: float,
+                gaits: dict = GAITS) -> tuple[str, np.ndarray]:
+    """按速度分量选择最慢可用步态并限幅（模板 move_local 同逻辑）。"""
+    ax, ay, az = abs(vx), abs(vy), abs(wz)
+    chosen = "fast"
+    for name in ("slow", "mid"):
+        g = gaits[name]
+        if ax <= g["max_vx"] and ay <= g["max_vy"] and az <= g["max_wz"]:
+            chosen = name
+            break
+    g = gaits[chosen]
+    cmd = np.array([np.clip(vx, -g["max_vx"], g["max_vx"]),
+                    np.clip(vy, -g["max_vy"], g["max_vy"]),
+                    np.clip(wz, -g["max_wz"], g["max_wz"])])
+    return chosen, cmd
+
+
+class MotionServoCmdTransport:
+    """出厂 ROS2 运控：protocol.msg/MotionServoCmd → /{dog}/motion_servo_cmd。"""
+
+    def __init__(self, node, topic: str, step_height: float = 0.05) -> None:
+        from protocol.msg import MotionServoCmd
+        self._cls = MotionServoCmd
+        self._pub = node.create_publisher(MotionServoCmd, topic, 10)
+        self._step = [float(step_height), float(step_height)]
+        self.last_gait = None
+
+    def send(self, cmd: np.ndarray) -> None:
+        gait, limited = select_gait(float(cmd[0]), float(cmd[1]), float(cmd[2]))
+        msg = self._cls()
+        msg.motion_id = GAITS[gait]["id"]
+        msg.cmd_type = 1
+        msg.value = 2
+        msg.vel_des = [float(limited[0]), float(limited[1]), float(limited[2])]
+        msg.step_height = self._step
+        self._pub.publish(msg)
+        self.last_gait = gait
+
+    def close(self) -> None:
+        pass
+
+
 class TwistTransport:
     def __init__(self, node, topic: str) -> None:
         from geometry_msgs.msg import Twist  # noqa: F401
@@ -127,7 +177,12 @@ class LcmTransport:
 
 
 def make_transport(node, cfg: dict):
-    backend = cfg.get("backend", "twist")
+    backend = cfg.get("backend", "motion_servo")
+    if backend == "motion_servo":
+        dog = cfg.get("dog_name", "dog0")
+        topic = cfg.get("motion_servo_topic") or f"/{dog}/motion_servo_cmd"
+        return MotionServoCmdTransport(
+            node, topic, step_height=float(cfg.get("step_height", 0.05)))
     if backend == "twist":
         return TwistTransport(node, cfg.get("cmd_vel_topic", "/cmd_vel"))
     if backend == "lcm":
@@ -136,4 +191,4 @@ def make_transport(node, cfg: dict):
             mode=int(cfg.get("lcm_mode", 11)),
             vel_limit=tuple(cfg.get("vel_limit", (1.6, 0.55, 2.5))),
         )
-    raise ValueError(f"未知 backend: {backend}（∈ twist|lcm）")
+    raise ValueError(f"未知 backend: {backend}（∈ motion_servo|twist|lcm）")

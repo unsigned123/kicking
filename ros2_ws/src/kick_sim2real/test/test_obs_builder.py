@@ -112,3 +112,18 @@ def test_policy_loader_roundtrip(tmp_path):
     rt = PolicyRuntime(str(dst))
     cmd = rt.act(np.zeros(55, dtype=np.float32))
     assert cmd.shape == (3,)
+
+
+def test_select_gait_and_limit():
+    from kick_sim2real.transport import GAITS, select_gait
+
+    # 慢速 → slow(303)；中速 → mid(308)；快速 → fast(305)
+    assert select_gait(0.3, 0.1, 0.5)[0] == "slow"
+    assert select_gait(0.9, 0.1, 0.9)[0] == "mid"
+    assert select_gait(1.5, 0.4, 2.0)[0] == "fast"
+    # 超限幅
+    name, cmd = select_gait(3.0, 9.0, 9.0)
+    assert name == "fast"
+    np.testing.assert_allclose(cmd, [1.6, 0.55, 2.5])
+    assert GAITS["slow"]["id"] == 303 and GAITS["mid"]["id"] == 308 \
+        and GAITS["fast"]["id"] == 305

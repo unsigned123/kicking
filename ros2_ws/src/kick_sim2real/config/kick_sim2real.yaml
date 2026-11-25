@@ -1,30 +1,35 @@
-# kick_sim2real 部署配置
+# kick_sim2real 部署配置（与 Machine-Dog 模板话题面对齐）
 # 用法: ros2 launch kick_sim2real kick_sim2real.launch.py params:=$PWD/config/kick_sim2real.yaml
 
 kick_sim2real:
   ros__parameters:
     # ---- 策略 -----------------------------------------------------------
-    policy_ckpt: "/home/user/kick_policy.pt"   # export 产物
-    dry_run: true                              # 首次联调置 true：只打印命令
+    policy_ckpt: "/home/mi/kick_policy.pt"   # export 产物
+    dry_run: true                            # 首次联调置 true
 
-    # ---- 输出后端 -------------------------------------------------------
-    backend: "twist"            # twist（ROS2 topic）| lcm（出厂运控直连）
-    cmd_vel_topic: "/cmd_vel"   # backend=twist 时的发布话题
-    lcm_mode: 11                # LOCOMOTION
-    lcm_gait_id: 26             # TROT 自变频（10=FAST 3=MEDIUM 27=SLOW）
+    # ---- 本体与输出后端 -------------------------------------------------
+    dog_name: "dog0"
+    backend: "motion_servo"     # motion_servo | twist | lcm
+    # motion_servo → protocol.msg/MotionServoCmd 到 /<dog>/motion_servo_cmd
+    #                （出厂速度控制器；步态 303/308/305 自动选择）
+    motion_servo_topic: ""      # 空 = /<dog_name>/motion_servo_cmd
+    cmd_vel_topic: "/cmd_vel"   # backend=twist 时
+    lcm_mode: 11                # backend=lcm 时（出厂运控直连兜底）
+    lcm_gait_id: 26
     vel_limit: [1.6, 0.55, 2.5] # 与训练命令 ranges 一致
 
-    # ---- 输入话题 -------------------------------------------------------
+    # ---- 输入话题（模板面） ---------------------------------------------
     joint_states_topic: "/joint_states"
     imu_topic: "/imu/data"
-    odom_topic: "/odom"
-    ball_pose_topic: "/mocap/ball_pose"      # 动捕球位（PoseStamped）
-    estop_topic: "/kick_sim2real/estop"      # std_msgs/Bool
+    odom_topic: ""                     # 空 = /<dog_name>/odom_out
+    dog_pose_topic: ""                 # 空 = /absolute_pose/<dog_name>
+    ball_pose_topic: "/absolute_pose/ball"
+    estop_topic: "/kick_sim2real/estop"
 
     # ---- 场地标定 -------------------------------------------------------
-    goal_center_xy: [0.0, 3.0]        # 世界系球门中心（与训练 GOAL_CENTER 语义同）
-    mocap_frame_offset_xy: [0.0, 0.0] # 动捕系 → 里程计系 平移
-    mocap_yaw_offset: 0.0             # 动捕系 → 里程计系 旋转（rad）
+    goal_center_xy: [0.0, 3.0]         # 球门中心（absolute_pose 世界系）
+    mocap_frame_offset_xy: [0.0, 0.0]  # 动捕/世界系 → 里程计系微调
+    mocap_yaw_offset: 0.0
 
     # ---- 频率与安全 -----------------------------------------------------
     control_hz: 50.0

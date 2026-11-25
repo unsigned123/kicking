@@ -58,16 +58,20 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
 # 3) 急停: ros2 topic pub /kick_sim2real/estop std_msgs/Bool "data: true"
 ```
 
-## 5. 两种输出后端
+## 5. 三种输出后端
 
-### A. `twist`（缺省）
+### A. `motion_servo`（缺省，与 Machine-Dog 模板同款）
 
-发布 `geometry_msgs/Twist` 到 `cmd_vel_topic`（`linear.x=vx, linear.y=vy,
-angular.z=wz`）。**前置条件**：机器人侧已有 ROS2→出厂运控的桥（如 cyberdog_ros2
-的 motion_control）。若官方 ROS2 面只提供 `MotionServoCmd` 服务/话题，需要加一层
-15 行桥或改用 lcm 后端。
+发布 `protocol.msg/MotionServoCmd` 到 `/<dog_name>/motion_servo_cmd`：
+`motion_id` 按速度自动选步态（**303 slow / 308 mid / 305 fast**，阈值表与模板
+`move_local` 同源）、`cmd_type=1`、`value=2`、`vel_des=[vx,vy,wz]`、
+`step_height`。**这就是"出厂自带速度控制器"的 ROS2 发布面。**
 
-### B. `lcm`（出厂运控文档接口，推荐兜底）
+### B. `twist`
+
+发布 `geometry_msgs/Twist` 到 `cmd_vel_topic`（备用桥接形态）。
+
+### C. `lcm`（出厂运控文档接口，兜底）
 
 直连 MiRoboticsLab 文档的高层运控：
 
@@ -82,6 +86,19 @@ angular.z=wz`）。**前置条件**：机器人侧已有 ROS2→出厂运控的�
 | 状态 | `robot_control_response`（7670, 50Hz）`switch_status`：0=Done 2=ESTOP 3=EDAMP 4=LIFTED |
 | 里程计 | `global_to_robot`（7667, 50Hz）`xyz/vBody/omegaBody/rpy` |
 
+### 与 Machine-Dog 模板的集成
+
+- **Skill 封装**：`kick_sim2real/skill.py::KickPolicySkill` 可直接挂进模板的
+  `skill_manager`（`self.skills = {5: KickPolicySkill(self, move_skill, ckpt)}`），
+  内部把策略输出写入 `move_local` 的 `target_vx/vy/wz`，由模板既有的
+  限幅+选步态+发布链路统一输出。
+- **数据面完全复用模板话题**：`/absolute_pose/<dog_name>`（狗世界位姿，odom+VRPN
+  5s 校准）、`/absolute_pose/ball`（球世界位姿，VRPN）、`/<dog_name>/odom_out`
+  （机体速度）、`/vrpn/<obj>/pose|twist|accel`（原始动捕）。**无需自己写动捕驱动**。
+- **模板没有的两路输入**：`/joint_states` 与 `/imu/data`（我们的 55 维 obs 需要
+  12 关节 q/qd + 陀螺）。模板技能是几何式的所以不用；上机前需确认机器人上谁发布
+  这两路（cyberdog_ros2 或自建转发）。
+
 ## 6. ⚠️ 已知缺失与前置条件（联调前必读）
 
 1. **`last_action`（12 维）在实机上没有直接对应量**：训练时该通道是冻结低层的
@@ -91,9 +108,9 @@ angular.z=wz`）。**前置条件**：机器人侧已有 ROS2→出厂运控的�
 2. **关节状态来源未定**：出厂高层 LCM 不提供关节反馈。需确认机器人上
    `cyberdog_ros2` 传感器节点是否发布 `/joint_states`（NX 板）；否则只能改用低层
    SDK 的只读状态订阅（有进入电机模式的风险）或把节点部署到 NX 板。
-3. **动捕系统未定**：默认 `geometry_msgs/PoseStamped`（`/mocap/ball_pose`）。
-   VRPN/OptiTrack/Nokon 等需按实际类型改订阅；需要**动捕系↔里程计系外参标定**
-   （配置里已留 offset/yaw 项）。
+3. **动捕面已按模板对齐（VRPN）**：`/absolute_pose/ball` 来自模板的
+   `absolute_coordination`（VRPN → 世界系）。仍需做一次**场地标定**：设定
+   `goal_center_xy`（球门在世界系坐标）并核对狗/球坐标一致。
 4. **机器人自身位姿**：用出厂里程计（腿式里程计，50Hz，会缓慢漂移）。长时间运行
    建议给狗也贴动捕 marker 替代 odom。
 5. **域间隙**：上层策略训练时的低层是我们自己的速度跟踪器（kp25/d0.5 DCMotor

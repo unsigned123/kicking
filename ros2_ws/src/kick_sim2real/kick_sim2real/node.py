@@ -1,139 +1,131 @@
-"""kick_sim2real 主节点：50Hz 策略闭环 + 安全 FSM。
+"""kick_sim2real 独立节点（不依赖 skill_manager；也可被 skill.py 包装复用）。
 
-数据流::
+数据源（与 Machine-Dog 模板同话题面）::
 
-    /joint_states (q, qd) ─┐
-    /imu/data (quat, gyro) ─┤
-    /odom (pose, vBody)    ─┼→ 55 维 obs → 策略 → [vx,vy,wz] → 运输后端
-    mocap /ball_pose       ─┘                        (Twist 或 LCM)
+    /absolute_pose/<dog_name>   (robot_interfaces/AbsoluteObjectInfo) 狗世界位姿+朝向
+    /absolute_pose/ball         (robot_interfaces/AbsoluteObjectInfo) 球世界位姿
+    /<dog_name>/odom_out        (nav_msgs/Odometry) 机体速度（body 系）
+    /joint_states               (sensor_msgs/JointState) 12 关节
+    /imu/data                   (sensor_msgs/Imu) 陀螺/四元数（缺省回退）
+    /kick_sim2real/estop        (std_msgs/Bool)
 
-安全（缺省开启；任一触发 → 发零速保持心跳）：
-  - /joint_states 超时 > joint_timeout_s
-  - odom/动捕超时
-  - 出厂运控 switch_status ∈ {2 ESTOP, 3 EDAMP, 4 LIFTED}（LCM 后端）
-  - 急停话题 std_msgs/Bool True（可选）
+输出：``protocol.msg/MotionServoCmd`` → ``/<dog_name>/motion_servo_cmd``
+（出厂速度控制器；gait 303/308/305 自动选择）。
 """
 
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 import numpy as np
 import rclpy
-from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, JointState
+from std_msgs.msg import Bool
 
-from . import joint_spec
-from .obs_builder import (GOAL_CENTER_XY, build_obs)
+from .controller import KickController
 from .policy import PolicyRuntime
 from .transport import LcmTransport, make_transport
-
-SAFE_STATUS = {0}       # Done
-BAD_STATUS = {2, 3, 4}  # ESTOP / EDAMP / LIFTED
 
 
 class KickSim2RealNode(Node):
     def __init__(self) -> None:
         super().__init__("kick_sim2real")
+        d = self.declare_parameter
 
-        # ---- parameters ------------------------------------------------- #
-        self.declare_parameter("policy_ckpt", "")
-        self.declare_parameter("backend", "twist")
-        self.declare_parameter("cmd_vel_topic", "/cmd_vel")
-        self.declare_parameter("joint_states_topic", "/joint_states")
-        self.declare_parameter("imu_topic", "/imu/data")
-        self.declare_parameter("odom_topic", "/odom")
-        self.declare_parameter("ball_pose_topic", "/mocap/ball_pose")
-        self.declare_parameter("estop_topic", "/kick_sim2real/estop")
-        self.declare_parameter("goal_center_xy", [0.0, 3.0])
-        self.declare_parameter("mocap_frame_offset_xy", [0.0, 0.0])
-        self.declare_parameter("mocap_yaw_offset", 0.0)
-        self.declare_parameter("vel_limit", [1.6, 0.55, 2.5])
-        self.declare_parameter("control_hz", 50.0)
-        self.declare_parameter("joint_timeout_s", 0.10)
-        self.declare_parameter("odom_timeout_s", 0.25)
-        self.declare_parameter("ball_timeout_s", 0.30)
-        self.declare_parameter("last_action_source", "joint_deviation")
-        self.declare_parameter("lcm_gait_id", 26)
-        self.declare_parameter("lcm_mode", 11)
-        self.declare_parameter("dry_run", False)
+        d("policy_ckpt", "")
+        d("backend", "motion_servo")
+        d("dog_name", "dog0")
+        d("motion_servo_topic", "")
+        d("cmd_vel_topic", "/cmd_vel")
+        d("joint_states_topic", "/joint_states")
+        d("imu_topic", "/imu/data")
+        d("odom_topic", "")
+        d("dog_pose_topic", "")
+        d("ball_pose_topic", "/absolute_pose/ball")
+        d("estop_topic", "/kick_sim2real/estop")
+        d("goal_center_xy", [0.0, 3.0])
+        d("mocap_frame_offset_xy", [0.0, 0.0])
+        d("mocap_yaw_offset", 0.0)
+        d("vel_limit", [1.6, 0.55, 2.5])
+        d("control_hz", 50.0)
+        d("joint_timeout_s", 0.10)
+        d("odom_timeout_s", 0.25)
+        d("ball_timeout_s", 0.30)
+        d("last_action_source", "joint_deviation")
+        d("lcm_gait_id", 26)
+        d("lcm_mode", 11)
+        d("dry_run", False)
 
         gp = lambda k: self.get_parameter(k).value  # noqa: E731
-        self._goal = tuple(float(v) for v in gp("goal_center_xy"))
-        self._vel_limit = np.asarray(gp("vel_limit"), dtype=np.float64)
-        self._joint_timeout = float(gp("joint_timeout_s"))
-        self._odom_timeout = float(gp("odom_timeout_s"))
-        self._ball_timeout = float(gp("ball_timeout_s"))
-        self._last_action_source = str(gp("last_action_source"))
+        dog = str(gp("dog_name"))
         self._dry_run = bool(gp("dry_run"))
         self._mocap_off = np.asarray(gp("mocap_frame_offset_xy"),
                                      dtype=np.float64)
         self._mocap_yaw = float(gp("mocap_yaw_offset"))
-        self._default_q = np.asarray(joint_spec.TRAIN_DEFAULT_Q,
-                                     dtype=np.float64)
+        self._warn_t = 0.0
 
         ckpt = str(gp("policy_ckpt"))
         if not ckpt:
-            raise RuntimeError("参数 policy_ckpt 未设置（导出的 .pt 路径）")
-        self.policy = PolicyRuntime(ckpt)
+            raise RuntimeError("参数 policy_ckpt 未设置（export 产物路径）")
+        self.ctrl = KickController(
+            ckpt,
+            goal_xy=tuple(gp("goal_center_xy")),
+            vel_limit=tuple(gp("vel_limit")),
+            joint_timeout_s=float(gp("joint_timeout_s")),
+            odom_timeout_s=float(gp("odom_timeout_s")),
+            ball_timeout_s=float(gp("ball_timeout_s")),
+            last_action_source=str(gp("last_action_source")),
+        )
         self.get_logger().info(
-            f"policy loaded: {ckpt} (obs={self.policy.obs_dim}, "
-            f"hidden={self.policy.hidden}, md5={PolicyRuntime.md5(ckpt)[:8]})")
-
-        # ---- state buffers ---------------------------------------------- #
-        self._q: Optional[np.ndarray] = None
-        self._qd: Optional[np.ndarray] = None
-        self._quat = None
-        self._gyro = None
-        self._robot_xy = None
-        self._base_lin_vel = None
-        self._ball_xy = None
-        self._t_joint = self._t_odom = self._t_ball = 0.0
-        self._estop = False
-        self._status: Optional[int] = None
-        self._joint_index: Optional[list[int]] = None
-        self._joint_warned = False
+            f"policy loaded: {ckpt} (obs={self.ctrl.policy.obs_dim}, "
+            f"hidden={self.ctrl.policy.hidden}, "
+            f"md5={PolicyRuntime.md5(ckpt)[:8]})")
 
         # ---- transport --------------------------------------------------- #
         backend = str(gp("backend"))
-        cfg = {"backend": backend,
+        cfg = {"backend": backend, "dog_name": dog,
+               "motion_servo_topic": str(gp("motion_servo_topic")) or None,
                "cmd_vel_topic": str(gp("cmd_vel_topic")),
                "lcm_gait_id": int(gp("lcm_gait_id")),
                "lcm_mode": int(gp("lcm_mode")),
-               "vel_limit": tuple(self._vel_limit)}
+               "vel_limit": tuple(gp("vel_limit"))}
         self.transport = make_transport(self, cfg)
-        if isinstance(self.transport, LcmTransport):
+        self._lcm = isinstance(self.transport, LcmTransport)
+        if self._lcm:
             self.transport._on_odom = self._on_lcm_odom
-            self.transport._on_status = self._on_lcm_status
-            self._lcm = True
-        else:
-            self._lcm = False
+            self.transport._on_status = self.ctrl.set_status
 
-        # ---- ROS subscriptions ------------------------------------------ #
-        from std_msgs.msg import Bool
+        # ---- sources (template topics) ----------------------------------- #
+        from robot_interfaces.msg import AbsoluteObjectInfo
+        from nav_msgs.msg import Odometry
+        from sensor_msgs.msg import Imu, JointState
+
+        dog_pose_topic = str(gp("dog_pose_topic")) or f"/absolute_pose/{dog}"
+        odom_topic = str(gp("odom_topic")) or f"/{dog}/odom_out"
+
         self.create_subscription(JointState, str(gp("joint_states_topic")),
                                  self._on_joint, 10)
         self.create_subscription(Imu, str(gp("imu_topic")), self._on_imu, 10)
-        self.create_subscription(Odometry, str(gp("odom_topic")), self._on_odom,
-                                 10)
-        from geometry_msgs.msg import PoseStamped
-        self.create_subscription(PoseStamped, str(gp("ball_pose_topic")),
+        self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
+        self.create_subscription(AbsoluteObjectInfo, dog_pose_topic,
+                                 self._on_dog_pose, 10)
+        self.create_subscription(AbsoluteObjectInfo, str(gp("ball_pose_topic")),
                                  self._on_ball, 10)
-        self.create_subscription(Bool, str(gp("estop_topic")), self._on_estop,
-                                 10)
+        self.create_subscription(Bool, str(gp("estop_topic")),
+                                 lambda m: self.ctrl.set_estop(m.data), 10)
 
+        self._joint_index = None
+        self._joint_warned = False
         hz = float(gp("control_hz"))
         self.create_timer(1.0 / hz, self._tick)
-        self._warn_t = 0.0
         self.get_logger().info(
-            f"kick_sim2real ready: backend={backend} hz={hz} "
-            f"goal={self._goal} vel_limit={self._vel_limit.tolist()} "
+            f"kick_sim2real ready: backend={backend} dog={dog} hz={hz} "
+            f"goal={self.ctrl.goal_xy} vel_limit={self.ctrl.vel_limit.tolist()} "
             f"dry_run={self._dry_run}")
 
     # ---- callbacks ------------------------------------------------------ #
-    def _on_joint(self, msg: JointState) -> None:
+    def _on_joint(self, msg) -> None:
+        from . import joint_spec
         if self._joint_index is None:
             try:
                 self._joint_index = joint_spec.resolve_joint_indices(msg.name)
@@ -143,83 +135,59 @@ class KickSim2RealNode(Node):
                     self._joint_warned = True
                 return
         idx = self._joint_index
-        q_sdk = [msg.position[i] for i in idx]
-        qd_sdk = [msg.velocity[i] for i in idx] if msg.velocity else [0.0] * 12
-        self._q = np.asarray(joint_spec.reorder_sdk_to_train(q_sdk))
-        self._qd = np.asarray(joint_spec.reorder_sdk_to_train(qd_sdk))
-        self._t_joint = time.time()
+        q = [msg.position[i] for i in idx]
+        qd = [msg.velocity[i] for i in idx] if msg.velocity else [0.0] * 12
+        self.ctrl.set_joints(joint_spec.reorder_sdk_to_train(q),
+                             joint_spec.reorder_sdk_to_train(qd))
 
-    def _on_imu(self, msg: Imu) -> None:
-        self._quat = np.array([msg.orientation.x, msg.orientation.y,
-                               msg.orientation.z, msg.orientation.w])
-        self._gyro = np.array([msg.angular_velocity.x, msg.angular_velocity.y,
-                               msg.angular_velocity.z])
+    def _on_imu(self, msg) -> None:
+        if self.ctrl.quat is not None:
+            return  # 世界朝向以 absolute_pose 为准
+        self.ctrl.set_imu(
+            [msg.orientation.x, msg.orientation.y,
+             msg.orientation.z, msg.orientation.w],
+            [msg.angular_velocity.x, msg.angular_velocity.y,
+             msg.angular_velocity.z])
 
-    def _on_odom(self, msg: Odometry) -> None:
+    def _on_odom(self, msg) -> None:
         p = msg.pose.pose.position
-        self._robot_xy = np.array([p.x, p.y])
         v = msg.twist.twist.linear
-        self._base_lin_vel = np.array([v.x, v.y, v.z])
         w = msg.twist.twist.angular
-        self._gyro = np.array([w.x, w.y, w.z])
-        o = msg.pose.pose.orientation
-        self._quat = np.array([o.x, o.y, o.z, o.w])
-        self._t_odom = time.time()
+        self.ctrl.set_odom([p.x, p.y], [v.x, v.y, v.z], [w.x, w.y, w.z])
+
+    def _on_dog_pose(self, msg) -> None:
+        p = msg.position
+        o = msg.orientation
+        v = msg.linear_velocity
+        w = msg.angular_velocity
+        self.ctrl.set_odom([p.x, p.y], [v.x, v.y, v.z],
+                           [w.x, w.y, w.z], [o.x, o.y, o.z, o.w])
+
+    def _on_ball(self, msg) -> None:
+        p = msg.position
+        x, y = p.x + self._mocap_off[0], p.y + self._mocap_off[1]
+        if abs(self._mocap_yaw) > 1e-9:
+            c, s = np.cos(self._mocap_yaw), np.sin(self._mocap_yaw)
+            x, y = c * x - s * y, s * x + c * y
+        self.ctrl.set_ball([x, y])
 
     def _on_lcm_odom(self, xyz, vbody, omega, rpy, stamp) -> None:
-        self._robot_xy = xyz[:2].copy()
-        self._base_lin_vel = vbody.copy()
-        self._gyro = omega.copy()
-        # rpy → quat（xyz 欧拉，zyx 序）
         import math
         cy, cp, cr = (math.cos(rpy[2] / 2), math.cos(rpy[1] / 2),
                       math.cos(rpy[0] / 2))
         sy, sp, sr = (math.sin(rpy[2] / 2), math.sin(rpy[1] / 2),
                       math.sin(rpy[0] / 2))
-        self._quat = np.array([
-            sr * cp * cy - cr * sp * sy,
-            cr * sp * cy + sr * cp * sy,
-            cr * cp * sy - sr * sp * cy,
-            cr * cp * cy + sr * sp * sy])
-        self._t_odom = stamp
+        self.ctrl.set_odom(
+            xyz[:2], vbody, omega,
+            [sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy,
+             cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy])
 
-    def _on_lcm_status(self, switch_status: int) -> None:
-        self._status = switch_status
-
-    def _on_ball(self, msg) -> None:
-        p = msg.pose.position
-        x = p.x + self._mocap_off[0]
-        y = p.y + self._mocap_off[1]
-        if abs(self._mocap_yaw) > 1e-9:
-            c, s = np.cos(self._mocap_yaw), np.sin(self._mocap_yaw)
-            x, y = c * x - s * y, s * x + c * y
-        self._ball_xy = np.array([x, y])
-        self._t_ball = time.time()
-
-    def _on_estop(self, msg) -> None:
-        self._estop = bool(msg.data)
-
-    # ---- main loop ------------------------------------------------------ #
-    def _safe_reason(self) -> Optional[str]:
-        now = time.time()
-        if self._estop:
-            return "estop"
-        if self._q is None or now - self._t_joint > self._joint_timeout:
-            return "joint_states stale/missing"
-        if (self._quat is None or self._robot_xy is None
-                or now - self._t_odom > self._odom_timeout):
-            return "odom/imu stale/missing"
-        if self._ball_xy is None or now - self._t_ball > self._ball_timeout:
-            return "mocap ball stale/missing"
-        if self._status is not None and self._status in BAD_STATUS:
-            return f"factory switch_status={self._status}"
-        return None
-
+    # ---- loop ----------------------------------------------------------- #
     def _tick(self) -> None:
         if self._lcm:
             self.transport.spin_once(0.0)
-        reason = self._safe_reason()
-        if reason is not None:
+        cmd, reason = self.ctrl.tick()
+        if cmd is None:
             if self._dry_run:
                 self.get_logger().warn(f"[dry_run] blocked: {reason}",
                                        throttle_duration_sec=2.0)
@@ -230,29 +198,12 @@ class KickSim2RealNode(Node):
                 self.get_logger().warn(f"hold zero: {reason}")
                 self._warn_t = now
             return
-
-        last_action = self._last_action()
-        obs = build_obs(
-            joint_pos=self._q, joint_vel=self._qd,
-            base_ang_vel=self._gyro, quat_xyzw=self._quat,
-            last_action=last_action, base_lin_vel=self._base_lin_vel,
-            robot_xy=self._robot_xy, ball_xy=self._ball_xy,
-            default_q=self._default_q, goal_xy=self._goal)
-        cmd = self.policy.act(obs)
-        cmd = np.clip(cmd, -self._vel_limit, self._vel_limit)
         if self._dry_run:
             self.get_logger().info(
                 f"[dry_run] cmd=[{cmd[0]:+.2f},{cmd[1]:+.2f},{cmd[2]:+.2f}]",
                 throttle_duration_sec=1.0)
             return
         self.transport.send(cmd)
-
-    def _last_action(self) -> np.ndarray:
-        if self._last_action_source == "zeros":
-            return np.zeros(12)
-        # joint_deviation 代理：低层 target = default + 0.5·a（官方口径），
-        # 实测 q 跟踪 target → a ≈ (q − default)/0.5
-        return (self._q - self._default_q) / joint_spec.OFFICIAL_ACTION_SCALE
 
     def destroy_node(self) -> bool:
         try:
