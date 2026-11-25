@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>kick_sim2real</name>
+  <version>0.1.0</version>
+  <description>
+    Sim-to-real deployment node for the hierarchical_kick upper policy:
+    consumes robot proprioception (joint states / IMU / odometry) and mocap ball
+    pose, runs the trained 3-dim command policy at 50 Hz, and publishes velocity
+    commands to the robot's factory velocity controller (ROS2 topic or LCM).
+  </description>
+  <maintainer email="cathing@126.com">unsigned123</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- optional: official CyberDog2 interfaces (MotionServoCmd) -->
+  <!-- <depend>cyberdog_interfaces</depend> -->
+  <!-- optional: LCM high-level factory interface -->
+  <!-- pip install lcm -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
