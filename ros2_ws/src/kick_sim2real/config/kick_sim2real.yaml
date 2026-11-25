@@ -18,6 +18,12 @@ kick_sim2real:
     lcm_gait_id: 26
     vel_limit: [1.6, 0.55, 2.5] # 与训练命令 ranges 一致
 
+    # ---- 数据源选择（关键：关节反馈走只读 LCM） --------------------------
+    # 高层接口（cyberdog_loco_cn §2）5 通道无关节反馈；spi_data（底层 7667）
+    # 只读订阅即得 q/qd（不发布 motor_ctrl → 不切电机模式，安全）
+    joint_source: "lcm_spi"        # ros | lcm_spi
+    odom_source: "lcm_localization"  # ros | lcm_localization
+
     # ---- 输入话题（模板面） ---------------------------------------------
     joint_states_topic: "/joint_states"
     imu_topic: "/imu/data"

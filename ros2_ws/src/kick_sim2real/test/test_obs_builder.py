@@ -127,3 +127,27 @@ def test_select_gait_and_limit():
     np.testing.assert_allclose(cmd, [1.6, 0.55, 2.5])
     assert GAITS["slow"]["id"] == 303 and GAITS["mid"]["id"] == 308 \
         and GAITS["fast"]["id"] == 305
+
+
+def test_spi_data_decode_signs_and_order():
+    """合成 spi_data 包：验证符号翻转 + SDK→训练序重排。"""
+    import struct
+
+    from kick_sim2real import joint_spec
+    from kick_sim2real.lcm_sources import (decode_spi_data,
+                                           SPI_PAYLOAD_OFFSET)
+
+    # 每腿 (abad, hip, knee) 原始读数 = 1.0/2.0/3.0（SDK 腿序 FR,FL,RR,RL）
+    buf = bytearray(SPI_PAYLOAD_OFFSET + 260)
+    for field_off, val in ((0, 1.0), (16, 2.0), (32, 3.0),
+                           (48, 0.1), (64, 0.2), (80, 0.3)):
+        struct.pack_into("<4f", buf, SPI_PAYLOAD_OFFSET + field_off,
+                         val, val, val, val)
+    dec = decode_spi_data(bytes(buf))
+    # FR: [+1, −2, −3]；FL 同；RR/RL 同
+    assert dec["q"][:3] == (1.0, -2.0, -3.0)
+    assert dec["q"][3:6] == (1.0, -2.0, -3.0)
+    assert abs(dec["qd"][1] + 0.2) < 1e-6
+    # SDK 序 → 训练序：SDK[0..2]=FR 三连 → 训练 idx 0/4/8
+    train = joint_spec.reorder_sdk_to_train(dec["q"])
+    assert train[0] == 1.0 and train[4] == -2.0 and train[8] == -3.0

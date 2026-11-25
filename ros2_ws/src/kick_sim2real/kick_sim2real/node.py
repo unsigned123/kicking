@@ -52,6 +52,8 @@ class KickSim2RealNode(Node):
         d("odom_timeout_s", 0.25)
         d("ball_timeout_s", 0.30)
         d("last_action_source", "joint_deviation")
+        d("joint_source", "ros")          # ros(/joint_states) | lcm_spi(只读)
+        d("odom_source", "ros")           # ros(absolute_pose/odom_out) | lcm_localization
         d("lcm_gait_id", 26)
         d("lcm_mode", 11)
         d("dry_run", False)
@@ -103,10 +105,28 @@ class KickSim2RealNode(Node):
         dog_pose_topic = str(gp("dog_pose_topic")) or f"/absolute_pose/{dog}"
         odom_topic = str(gp("odom_topic")) or f"/{dog}/odom_out"
 
-        self.create_subscription(JointState, str(gp("joint_states_topic")),
-                                 self._on_joint, 10)
+        joint_source = str(gp("joint_source"))
+        odom_source = str(gp("odom_source"))
+        if joint_source == "ros":
+            self.create_subscription(JointState,
+                                     str(gp("joint_states_topic")),
+                                     self._on_joint, 10)
+        elif joint_source == "lcm_spi":
+            from .lcm_sources import SpiDataReader
+            self._spi = SpiDataReader(self.ctrl.set_joints)
+            self.get_logger().info(
+                "joint_source=lcm_spi（只读订阅 spi_data，不进入电机模式）")
+        else:
+            raise ValueError(f"joint_source 非法: {joint_source}")
         self.create_subscription(Imu, str(gp("imu_topic")), self._on_imu, 10)
-        self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
+        if odom_source == "ros":
+            self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
+        elif odom_source == "lcm_localization":
+            from .lcm_sources import LocalizationReader
+            self._loc = LocalizationReader(self.ctrl.set_odom)
+            self.get_logger().info("odom_source=lcm_localization（只读）")
+        else:
+            raise ValueError(f"odom_source 非法: {odom_source}")
         self.create_subscription(AbsoluteObjectInfo, dog_pose_topic,
                                  self._on_dog_pose, 10)
         self.create_subscription(AbsoluteObjectInfo, str(gp("ball_pose_topic")),

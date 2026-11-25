@@ -105,16 +105,15 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
    12 维动作输出；出厂控制器内部动作不可读。当前实现用
    `(q − q_default)/0.5` 作代理（`last_action_source: joint_deviation`）。若行为
    异常，建议在仿真侧做一次「去 last_action 通道」的消融重训，再部署无耦合版本。
-2. **关节状态：官方能力清单中不存在（已确认，不是待查项）**。VP 协议文档
-   （`cyberdog.motion/odometer/传感器`）提供 Odometry 与 Imu，但**没有 JointState**。
-   我们 55 维 obs 中有 36 维（12 joint_pos + 12 joint_vel + 12 last_action）因此
-   没有官方来源。三条出路：
-   a. **推荐**：仿真侧做「部署观测消融」——去掉 q/qd/last_action 三块，保留
-      ang_vel(3)+gravity(3)+linvel(3)+ball(3)+goal(4)+push(3)=**19 维**，重训上层
-      策略（仿真 2000it ≈ 30 分钟）后再部署，彻底绕开关节反馈依赖；
-   b. 低层面 motor SDK（cyberdog_motor_sdk CustomInterface）只读订阅 q/qd
-      （有进入电机控制模式的风险，需谨慎验证）；
-   c. 把节点部署到 NX 板并寻找内部关节话题（文档未公开，需现场探测）。
+2. **关节状态：高层接口无、底层通道有（已验证）**。高层接口（`cyberdog_loco_cn`
+   §2）共 5 个 LCM 通道——robot_control_cmd / robot_control_response /
+   motor_temperature / user_gait_result / global_to_robot——**不含关节反馈**；
+   VP 协议能力清单亦无 JointState。但底层通道 ``spi_data``（udpm 7667）含
+   q/qd/tau（字段序见 `lcm_sources.py` 头注），且**只订阅不发布 `motor_ctrl`
+   即可安全读取**（进入电机模式只取决于是否发布 motor_ctrl）。
+   → 本包已实现 `joint_source: lcm_spi` + `odom_source: lcm_localization`
+   （只读线程），**无需重训即可拿到完整 55 维 obs**。
+   备选：仿真侧「19 维部署观测消融」（去 q/qd/last_action）——若不想依赖底层通道。
 3. **动捕面已按模板对齐（VRPN）**：`/absolute_pose/ball` 来自模板的
    `absolute_coordination`（VRPN → 世界系）。仍需做一次**场地标定**：设定
    `goal_center_xy`（球门在世界系坐标）并核对狗/球坐标一致。
