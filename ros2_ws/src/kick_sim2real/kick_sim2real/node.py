@@ -46,6 +46,8 @@ class KickSim2RealNode(Node):
         d("goal_center_xy", [0.0, 3.0])
         d("mocap_frame_offset_xy", [0.0, 0.0])
         d("mocap_yaw_offset", 0.0)
+        d("odom_to_world_xy", [0.0, 0.0])
+        d("odom_to_world_yaw", 0.0)
         d("vel_limit", [1.6, 0.55, 2.5])
         d("control_hz", 50.0)
         d("joint_timeout_s", 0.10)
@@ -64,6 +66,9 @@ class KickSim2RealNode(Node):
         self._mocap_off = np.asarray(gp("mocap_frame_offset_xy"),
                                      dtype=np.float64)
         self._mocap_yaw = float(gp("mocap_yaw_offset"))
+        # odom → 世界系（仅当狗位姿来自 odom 而球/门来自动捕时需要；同源时全 0）
+        self._odom_t = np.asarray(gp("odom_to_world_xy"), dtype=np.float64)
+        self._odom_yaw = float(gp("odom_to_world_yaw"))
         self._warn_t = 0.0
 
         ckpt = str(gp("policy_ckpt"))
@@ -170,10 +175,15 @@ class KickSim2RealNode(Node):
              msg.angular_velocity.z])
 
     def _on_odom(self, msg) -> None:
+        from .obs_builder import transform_pose_2d
         p = msg.pose.pose.position
+        o = msg.pose.pose.orientation
         v = msg.twist.twist.linear
         w = msg.twist.twist.angular
-        self.ctrl.set_odom([p.x, p.y], [v.x, v.y, v.z], [w.x, w.y, w.z])
+        # 位置+四元数一起变换（机体系速度不变）
+        xy, quat = transform_pose_2d(
+            [p.x, p.y], [o.x, o.y, o.z, o.w], self._odom_t, self._odom_yaw)
+        self.ctrl.set_odom(xy, [v.x, v.y, v.z], [w.x, w.y, w.z], quat)
 
     def _on_dog_pose(self, msg) -> None:
         p = msg.position

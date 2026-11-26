@@ -151,3 +151,45 @@ def build_obs(joint_pos: Sequence[float], joint_vel: Sequence[float],
     ]).astype(np.float32)
     assert obs.shape == (OBS_DIM,), f"obs 维错误: {obs.shape}"
     return obs
+
+
+# --------------------------------------------------------------------------- #
+# 坐标系变换（odom 系 → 动捕/世界系）：位置平移 + 偏航旋转（xyzw 四元数复合）
+# --------------------------------------------------------------------------- #
+def yaw_quat(yaw: float) -> np.ndarray:
+    """偏航角 → 四元数 xyzw。"""
+    return np.array([0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)])
+
+
+def quat_mul(a: Sequence[float], b: Sequence[float]) -> np.ndarray:
+    """四元数乘法 a ⊗ b（xyzw）。"""
+    ax, ay, az, aw = (float(v) for v in a)
+    bx, by, bz, bw = (float(v) for v in b)
+    return np.array([
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    ])
+
+
+def rotate_xy(yaw: float, v: Sequence[float]) -> np.ndarray:
+    """绕 z 轴旋转二维向量。"""
+    c, s = math.cos(yaw), math.sin(yaw)
+    x, y = float(v[0]), float(v[1])
+    return np.array([c * x - s * y, s * x + c * y])
+
+
+def transform_pose_2d(xy: Sequence[float], quat_xyzw: Sequence[float],
+                      t_xy: Sequence[float], yaw_offset: float
+                      ) -> tuple[np.ndarray, np.ndarray]:
+    """把 odom 系的(位置, 姿态)刚体变换到世界系：p' = R·p + t, q' = q_yaw ⊗ q。
+
+    机体系速度（vBody/omegaBody）**不需要**变换（旋转不变性：它们本来就表达
+    在机体系）。仅当狗与球/门来自不同世界系时才需要本函数。
+    """
+    p = rotate_xy(yaw_offset, np.asarray(xy, dtype=np.float64)[:2]) \
+        + np.asarray(t_xy, dtype=np.float64)[:2]
+    q = quat_mul(yaw_quat(yaw_offset), np.asarray(quat_xyzw, dtype=np.float64))
+    q = q / (np.linalg.norm(q) + _EPS)
+    return p, q

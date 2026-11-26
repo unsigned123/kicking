@@ -99,6 +99,27 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
   Imu 与 Odometry 是官方能力（有消息源）；**JointState 不在能力清单**（详见 §6.2
   的消融方案 a）。IMU 来源可从官方 Imu 消息接入，joint 需按 §6.2 处理。
 
+## 5.5 坐标系（odom / 动捕）怎么处理
+
+55 维 obs 全是**机体系相对量**（`ball_rel_b`/`goal_rel_b`/`push_geometry_b` 为 body 系
+相对，`vBody/omegaBody/重力/关节` 本就是机体系），因此**任何一个世界系都可以**——
+全局平移+偏航（对狗/球/门同步施加）在相对运算里完全抵消（有单测
+`test_global_transform_invariance` 逐位验证）。
+
+两条正确做法：
+
+| 方案 | 数据源 | 需要的变换 |
+|---|---|---|
+| **A（推荐）** | 狗 `/vrpn/<dog>/pose`、球 `/vrpn/ball/pose`、门 `/vrpn/goal_*/pose` | **全 0**（天然同系 world） |
+| B（混源） | 狗 `odom_out`、球/门 动捕 | `odom_to_world_xy` + `odom_to_world_yaw`：对狗的**位置+四元数一起**做 `p'=R·p+t, q'=q_yaw⊗q`（机体系速度不变） |
+
+**B 的标定方法**：把狗放到动捕系一个已知点 (x_m, y_m) 且已知朝向 θ_m，读此刻 odom
+位姿 (x_o, y_o, θ_o)，则 `odom_to_world_yaw = θ_m − θ_o`，
+`odom_to_world_xy = [x_m, y_m] − R(θ_m−θ_o)·[x_o, y_o]`。
+
+**注意**：`mocap_frame_offset_xy/mocap_yaw_offset` 只作用于**球**，仅在"球与狗不同源"
+时微调用；方案 A 下保持 0。
+
 ## 6. ⚠️ 已知缺失与前置条件（联调前必读）
 
 1. **`last_action`（12 维）在实机上没有直接对应量**：训练时该通道是冻结低层的

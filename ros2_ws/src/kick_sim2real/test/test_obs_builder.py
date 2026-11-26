@@ -151,3 +151,30 @@ def test_spi_data_decode_signs_and_order():
     # SDK 序 → 训练序：SDK[0..2]=FR 三连 → 训练 idx 0/4/8
     train = joint_spec.reorder_sdk_to_train(dec["q"])
     assert train[0] == 1.0 and train[4] == -2.0 and train[8] == -3.0
+
+
+def test_global_transform_invariance():
+    """全局平移+偏航变换（狗/球/门同步变换）→ 55 维 obs 逐位不变。"""
+    from kick_sim2real.obs_builder import (build_obs, rotate_xy,
+                                           transform_pose_2d)
+    q = np.array([0.0, 0.0, math.sin(0.3), math.cos(0.3)])
+    xy, ball, goal = np.array([1.0, 1.0]), np.array([2.0, 0.5]), (0.0, 3.0)
+    kw = dict(joint_pos=np.zeros(12), joint_vel=np.zeros(12),
+              base_ang_vel=np.zeros(3), last_action=np.zeros(12),
+              base_lin_vel=np.zeros(3), default_q=np.zeros(12))
+    o1 = build_obs(quat_xyzw=q, robot_xy=xy, ball_xy=ball, goal_xy=goal, **kw)
+    T, yaw = np.array([2.0, -1.0]), 0.7
+    xy2, q2 = transform_pose_2d(xy, q, T, yaw)
+    ball2 = rotate_xy(yaw, ball) + T
+    goal2 = tuple(rotate_xy(yaw, goal) + T)
+    o2 = build_obs(quat_xyzw=q2, robot_xy=xy2, ball_xy=ball2,
+                   goal_xy=goal2, **kw)
+    np.testing.assert_allclose(o1, o2, atol=1e-6)
+
+
+def test_transform_pose_2d_quaternion():
+    """姿态变换：偏航复合 = 偏航角相加；位置按 R·p+t。"""
+    from kick_sim2real.obs_builder import transform_pose_2d, yaw_from_quat
+    p, q = transform_pose_2d([0.0, 0.0], [0, 0, 0, 1], [1.0, 2.0], math.pi / 2)
+    np.testing.assert_allclose(p, [1.0, 2.0], atol=1e-9)
+    assert abs(yaw_from_quat(q) - math.pi / 2) < 1e-6
