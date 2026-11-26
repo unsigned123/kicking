@@ -110,8 +110,12 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
 
 | 方案 | 数据源 | 需要的变换 |
 |---|---|---|
-| **A（推荐）** | 狗 `/vrpn/<dog>/pose`、球 `/vrpn/ball/pose`、门 `/vrpn/goal_*/pose` | **全 0**（天然同系 world） |
-| B（混源） | 狗 `odom_out`、球/门 动捕 | `odom_to_world_xy` + `odom_to_world_yaw`：对狗的**位置+四元数一起**做 `p'=R·p+t, q'=q_yaw⊗q`（机体系速度不变） |
+| **A（缺省，推荐）** | 狗 `/vrpn/<dog_tracker>/pose`、球 `/vrpn/ball/pose`、门 `/vrpn/goal_*/pose` | **零变换**（天然同系 world） |
+| B（模板内建） | 模板 `absolute_coordination`（odom 位姿 + **每 5 s** VRPN 校准）→ `/absolute_pose/*` | 零（该节点已做对齐；需先启动它） |
+
+> 实机现状（2026-10 实测）：`dog_coordination` / `absolute_coordination` **未在运行**，
+> `/absolute_pose/*` 不存在 → 缺省走方案 A（`pose_source: vrpn`），
+> 机体速度仍取 `/<dog>/odom_out`（body 系，与坐标系无关）。
 
 **B 的标定方法**：把狗放到动捕系一个已知点 (x_m, y_m) 且已知朝向 θ_m，读此刻 odom
 位姿 (x_o, y_o, θ_o)，则 `odom_to_world_yaw = θ_m − θ_o`，

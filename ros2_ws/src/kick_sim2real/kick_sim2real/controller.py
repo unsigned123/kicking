@@ -74,6 +74,9 @@ class KickController:
             self.quat = np.asarray(quat_xyzw, dtype=np.float64)
         self.t_odom = time.time()
 
+    def set_goal(self, goal_xy: Sequence[float]) -> None:
+        self.goal_xy = (float(goal_xy[0]), float(goal_xy[1]))
+
     def set_ball(self, ball_xy: Sequence[float]) -> None:
         self.ball_xy = np.asarray(ball_xy, dtype=np.float64)[:2]
         self.t_ball = time.time()

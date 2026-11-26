@@ -42,6 +42,11 @@ class KickSim2RealNode(Node):
         d("odom_topic", "")
         d("dog_pose_topic", "")
         d("ball_pose_topic", "/absolute_pose/ball")
+        d("pose_source", "vrpn")            # vrpn（方案A，直接原始动捕）| absolute
+        d("dog_tracker", "dog0")            # 本机 VRPN tracker 名（如 GEXY2/Lizj_dog）
+        d("ball_tracker", "ball")
+        d("goal_source", "vrpn")            # vrpn | fixed
+        d("goal_tracker", "goal_left")      # 进攻门（双门场地二选一）
         d("estop_topic", "/kick_sim2real/estop")
         d("goal_center_xy", [0.0, 3.0])
         d("mocap_frame_offset_xy", [0.0, 0.0])
@@ -63,12 +68,11 @@ class KickSim2RealNode(Node):
         gp = lambda k: self.get_parameter(k).value  # noqa: E731
         dog = str(gp("dog_name"))
         self._dry_run = bool(gp("dry_run"))
+        self._last_body_vel = np.zeros(3)
+        self._last_gyro = np.zeros(3)
         self._mocap_off = np.asarray(gp("mocap_frame_offset_xy"),
                                      dtype=np.float64)
         self._mocap_yaw = float(gp("mocap_yaw_offset"))
-        # odom → 世界系（仅当狗位姿来自 odom 而球/门来自动捕时需要；同源时全 0）
-        self._odom_t = np.asarray(gp("odom_to_world_xy"), dtype=np.float64)
-        self._odom_yaw = float(gp("odom_to_world_yaw"))
         self._warn_t = 0.0
 
         ckpt = str(gp("policy_ckpt"))
@@ -110,6 +114,14 @@ class KickSim2RealNode(Node):
         dog_pose_topic = str(gp("dog_pose_topic")) or f"/absolute_pose/{dog}"
         odom_topic = str(gp("odom_topic")) or f"/{dog}/odom_out"
 
+        pose_source = str(gp("pose_source"))
+        goal_source = str(gp("goal_source"))
+        if goal_source == "vrpn":
+            from geometry_msgs.msg import PoseStamped
+            self.create_subscription(
+                PoseStamped, f"/vrpn/{gp('goal_tracker')}/pose",
+                lambda m: self.ctrl.set_goal([m.pose.position.x,
+                                              m.pose.position.y]), 10)
         joint_source = str(gp("joint_source"))
         odom_source = str(gp("odom_source"))
         if joint_source == "ros":
@@ -132,10 +144,22 @@ class KickSim2RealNode(Node):
             self.get_logger().info("odom_source=lcm_localization（只读）")
         else:
             raise ValueError(f"odom_source 非法: {odom_source}")
-        self.create_subscription(AbsoluteObjectInfo, dog_pose_topic,
-                                 self._on_dog_pose, 10)
-        self.create_subscription(AbsoluteObjectInfo, str(gp("ball_pose_topic")),
-                                 self._on_ball, 10)
+        if pose_source == "vrpn":
+            from geometry_msgs.msg import PoseStamped
+            self.create_subscription(
+                PoseStamped, f"/vrpn/{gp('dog_tracker')}/pose",
+                self._on_vrpn_dog_pose, 10)
+            self.create_subscription(
+                PoseStamped, f"/vrpn/{gp('ball_tracker')}/pose",
+                self._on_vrpn_ball, 10)
+        elif pose_source == "absolute":
+            self.create_subscription(AbsoluteObjectInfo, dog_pose_topic,
+                                     self._on_dog_pose, 10)
+            self.create_subscription(
+                AbsoluteObjectInfo, str(gp("ball_pose_topic")),
+                self._on_ball, 10)
+        else:
+            raise ValueError(f"pose_source 非法: {pose_source}")
         self.create_subscription(Bool, str(gp("estop_topic")),
                                  lambda m: self.ctrl.set_estop(m.data), 10)
 
@@ -175,15 +199,25 @@ class KickSim2RealNode(Node):
              msg.angular_velocity.z])
 
     def _on_odom(self, msg) -> None:
-        from .obs_builder import transform_pose_2d
-        p = msg.pose.pose.position
-        o = msg.pose.pose.orientation
-        v = msg.twist.twist.linear
-        w = msg.twist.twist.angular
-        # 位置+四元数一起变换（机体系速度不变）
-        xy, quat = transform_pose_2d(
-            [p.x, p.y], [o.x, o.y, o.z, o.w], self._odom_t, self._odom_yaw)
-        self.ctrl.set_odom(xy, [v.x, v.y, v.z], [w.x, w.y, w.z], quat)
+        """odom_out 提供机体速度/陀螺（body 系，与坐标系无关）。"""
+        v, w = msg.twist.twist.linear, msg.twist.twist.angular
+        self._last_body_vel = np.array([v.x, v.y, v.z])
+        self._last_gyro = np.array([w.x, w.y, w.z])
+        if self.ctrl.robot_xy is None:  # 位姿源缺席时退化用 odom 位置
+            p = msg.pose.pose.position
+            self.ctrl.robot_xy = np.array([p.x, p.y])
+        self.ctrl.set_odom(self.ctrl.robot_xy, self._last_body_vel,
+                           self._last_gyro)
+
+    def _on_vrpn_dog_pose(self, msg) -> None:
+        """方案A：狗世界位姿直接取 VRPN（与球/门同系，无需任何变换）。"""
+        p, o = msg.pose.position, msg.pose.orientation
+        self.ctrl.set_odom([p.x, p.y], self._last_body_vel,
+                           self._last_gyro, [o.x, o.y, o.z, o.w])
+
+    def _on_vrpn_ball(self, msg) -> None:
+        p = msg.pose.position
+        self.ctrl.set_ball([p.x, p.y])
 
     def _on_dog_pose(self, msg) -> None:
         p = msg.position

@@ -32,6 +32,13 @@ kick_sim2real:
     ball_pose_topic: "/absolute_pose/ball"
     estop_topic: "/kick_sim2real/estop"
 
+    # ---- 位姿来源（方案A：全部取 VRPN 原始话题，天然同系） ----------------
+    pose_source: "vrpn"        # vrpn（推荐）| absolute（模板 absolute_coordination 输出）
+    dog_tracker: "dog0"        # 本机 VRPN tracker 名（实机跟踪器：GEXY2/Lizj_dog/...）
+    ball_tracker: "ball"
+    goal_source: "vrpn"        # vrpn（活跟踪门柱）| fixed（用 goal_center_xy）
+    goal_tracker: "goal_left"  # 双门场地：选进攻那端（goal_left/goal_right）
+
     # ---- 坐标系规则（重要） ---------------------------------------------
     # obs 全为机体系相对量 → 只要 狗/球/门 同一世界系即可，全局平移+偏航自动抵消。
     # 方案A（推荐）：狗位姿也用 VRPN（/vrpn/<dog>/pose）→ 三个 offset 全 0。
