@@ -1,9 +1,14 @@
 """只读 LCM 数据源（不改运控模式）：关节反馈 + 里程计/IMU。
 
-高层接口章节（cyberdog_loco_cn）的 5 个通道清单里**没有关节反馈**；关节 q/qd
-在底层通道 ``spi_data``（udpm 7667）里——底层 SDK 的 CustomInterface 会订阅它，
-只有向 ``motor_ctrl`` *发布* 才进入电机模式。**本模块只订阅、不发布**，因此在
-出厂高层控制器驱动机器人的同时可以安全读取关节状态。
+关节反馈有两路（均在 udpm 7667，只读订阅、不发布 motor_ctrl → 不切电机模式）：
+
+- **``leg_control_data``（50 Hz，常规运控下一直广播）** ← 本模块主用：
+  q[12]/qd[12]/p[12]/v[12]/tau[12]/force[12]；
+  实测为 **大端**浮点、8 字节指纹前缀；腿序 FR/FL/RR/RL × (abad,hip,knee)
+- ``spi_data``（仅底层电机模式，常规模式静默）：q_abad/q_hip/q_knee + qd + tau
+
+另：``external_imu`` @500 Hz、``global_to_robot`` @50 Hz（里程计/机体系速度）、
+``state_estimator`` @50 Hz（7669）。
 
 ``spi_data`` 字段序（lcm-gen hpp 权威，payload 偏移相对消息体起点）::
 
@@ -137,3 +142,54 @@ class LocalizationReader:
                  np.array(msg.vBody, dtype=np.float64),
                  np.array(msg.omegaBody, dtype=np.float64),
                  np.array(quat, dtype=np.float64))
+
+
+# --------------------------------------------------------------------------- #
+# leg_control_data（50 Hz，常规运控模式）——大端编码
+# --------------------------------------------------------------------------- #
+def decode_leg_control_data(data: bytes, fingerprint_bytes: int = 8
+                            ) -> dict[str, tuple[float, ...]]:
+    """解码 leg_control_data → {'q': 12, 'qd': 12, 'tau': 12}（SDK 序+符号）。
+
+    实测布局：8 B 指纹 + 大端 float 字段（q/qd/p/v/tau_est/force_est/
+    force_desired）+ 3×int32 限位。腿序 FR/FL/RR/RL，符号 (+1,−1,−1)。
+    """
+    need = fingerprint_bytes + 7 * 12 * 4
+    if len(data) < need:
+        raise ValueError(f"leg_control_data 长度异常: {len(data)}")
+    off = fingerprint_bytes
+    q = struct.unpack_from(">12f", data, off)
+    qd = struct.unpack_from(">12f", data, off + 48)
+    tau = struct.unpack_from(">12f", data, off + 192)
+    q_s = [q[i] * _LEG_SIGN[i] for i in range(12)]
+    qd_s = [qd[i] * _LEG_SIGN[i] for i in range(12)]
+    tau_s = [tau[i] * _LEG_SIGN[i] for i in range(12)]
+    return {"q": tuple(q_s), "qd": tuple(qd_s), "tau": tuple(tau_s)}
+
+
+class LegDataReader:
+    """leg_control_data 只读订阅 → on_joints(q_train, qd_train)。"""
+
+    def __init__(self, on_joints: Callable[[list[float], list[float]], None],
+                 url: str = URL_MAIN, channel: str = "leg_control_data") -> None:
+        import lcm
+        self._cb = on_joints
+        self._lcm = lcm.LCM(url)
+        self._lcm.subscribe(channel, self._on_msg)
+        self._t = threading.Thread(target=self._spin, daemon=True)
+        self._t.start()
+
+    def _spin(self) -> None:
+        while True:
+            try:
+                self._lcm.handle()
+            except Exception:  # pragma: no cover
+                time.sleep(0.1)
+
+    def _on_msg(self, channel: str, data: bytes) -> None:
+        try:
+            dec = decode_leg_control_data(data)
+        except (ValueError, struct.error):
+            return
+        self._cb(joint_spec.reorder_sdk_to_train(dec["q"]),
+                 joint_spec.reorder_sdk_to_train(dec["qd"]))

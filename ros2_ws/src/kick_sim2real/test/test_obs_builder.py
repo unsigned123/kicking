@@ -178,3 +178,26 @@ def test_transform_pose_2d_quaternion():
     p, q = transform_pose_2d([0.0, 0.0], [0, 0, 0, 1], [1.0, 2.0], math.pi / 2)
     np.testing.assert_allclose(p, [1.0, 2.0], atol=1e-9)
     assert abs(yaw_from_quat(q) - math.pi / 2) < 1e-6
+
+
+def test_decode_leg_control_data_big_endian():
+    """合成 leg_control_data（大端）：验证解码值 + 符号 + SDK→训练序。"""
+    import struct
+
+    from kick_sim2real.lcm_sources import decode_leg_control_data
+    from kick_sim2real import joint_spec
+
+    # 12 关节：4 腿 × (abad,hip,knee) = (0.1, 0.8, -1.5)
+    vals = [0.1, 0.8, -1.5] * 4
+    buf = bytearray(8 + 7 * 12 * 4)
+    struct.pack_into(">12f", buf, 8, *vals)
+    struct.pack_into(">12f", buf, 8 + 48, *([0.01] * 12))
+    dec = decode_leg_control_data(bytes(buf))
+    # 符号 (+,-,-)：hip 0.8→-0.8，knee -1.5→+1.5
+    assert dec["q"][0] == pytest.approx(0.1)
+    assert dec["q"][1] == pytest.approx(-0.8)
+    assert dec["q"][2] == pytest.approx(1.5)
+    train = joint_spec.reorder_sdk_to_train(dec["q"])
+    assert train[0] == pytest.approx(0.1)   # FR_abad → 训练 0
+    assert train[4] == pytest.approx(-0.8)  # FR_hip  → 训练 4
+    assert train[8] == pytest.approx(1.5)   # FR_knee → 训练 8

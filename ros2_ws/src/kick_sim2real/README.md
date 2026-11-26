@@ -130,15 +130,14 @@ ros2 launch kick_sim2real kick_sim2real.launch.py \
    12 维动作输出；出厂控制器内部动作不可读。当前实现用
    `(q − q_default)/0.5` 作代理（`last_action_source: joint_deviation`）。若行为
    异常，建议在仿真侧做一次「去 last_action 通道」的消融重训，再部署无耦合版本。
-2. **关节状态：高层接口无、底层通道有（已验证）**。高层接口（`cyberdog_loco_cn`
-   §2）共 5 个 LCM 通道——robot_control_cmd / robot_control_response /
-   motor_temperature / user_gait_result / global_to_robot——**不含关节反馈**；
-   VP 协议能力清单亦无 JointState。但底层通道 ``spi_data``（udpm 7667）含
-   q/qd/tau（字段序见 `lcm_sources.py` 头注），且**只订阅不发布 `motor_ctrl`
-   即可安全读取**（进入电机模式只取决于是否发布 motor_ctrl）。
-   → 本包已实现 `joint_source: lcm_spi` + `odom_source: lcm_localization`
-   （只读线程），**无需重训即可拿到完整 55 维 obs**。
-   备选：仿真侧「19 维部署观测消融」（去 q/qd/last_action）——若不想依赖底层通道。
+2. **关节状态：可用（实机实测，2026-10）**。原始 LCM 总线（udpm 7667）上
+   **`leg_control_data` @50 Hz 一直广播** q[12]/qd[12]/p[12]/v[12]/tau/force
+   （实测为**大端**浮点 + 8 B 指纹前缀；腿序 FR/FL/RR/RL，符号 (+,-,-)）。
+   只订阅不发布 `motor_ctrl` 即安全（进电机模式只取决于是否发布）。
+   → `joint_source: lcm_leg`（缺省）**可直接拿到完整 55 维 obs，无需重训**。
+   注意：`spi_data` 是电机模式专用通道（常规运控下静默，0 Hz），不要用它。
+   其他实测通道：`external_imu` @500 Hz、`global_to_robot` @50 Hz、
+   `state_estimator` @50 Hz(7669)、`robot_control_response` @50 Hz。
 3. **动捕面已按模板对齐（VRPN）**：`/absolute_pose/ball` 来自模板的
    `absolute_coordination`（VRPN → 世界系）。仍需做一次**场地标定**：设定
    `goal_center_xy`（球门在世界系坐标）并核对狗/球坐标一致。

@@ -59,7 +59,7 @@ class KickSim2RealNode(Node):
         d("odom_timeout_s", 0.25)
         d("ball_timeout_s", 0.30)
         d("last_action_source", "joint_deviation")
-        d("joint_source", "ros")          # ros(/joint_states) | lcm_spi(只读)
+        d("joint_source", "lcm_leg")      # lcm_leg(50Hz) | lcm_spi | ros
         d("odom_source", "ros")           # ros(absolute_pose/odom_out) | lcm_localization
         d("lcm_gait_id", 26)
         d("lcm_mode", 11)
@@ -128,6 +128,11 @@ class KickSim2RealNode(Node):
             self.create_subscription(JointState,
                                      str(gp("joint_states_topic")),
                                      self._on_joint, 10)
+        elif joint_source == "lcm_leg":
+            from .lcm_sources import LegDataReader
+            self._leg = LegDataReader(self.ctrl.set_joints)
+            self.get_logger().info(
+                "joint_source=lcm_leg（只读订阅 leg_control_data @50Hz）")
         elif joint_source == "lcm_spi":
             from .lcm_sources import SpiDataReader
             self._spi = SpiDataReader(self.ctrl.set_joints)

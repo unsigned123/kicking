@@ -21,7 +21,7 @@ kick_sim2real:
     # ---- 数据源选择（关键：关节反馈走只读 LCM） --------------------------
     # 高层接口（cyberdog_loco_cn §2）5 通道无关节反馈；spi_data（底层 7667）
     # 只读订阅即得 q/qd（不发布 motor_ctrl → 不切电机模式，安全）
-    joint_source: "lcm_spi"        # ros | lcm_spi
+    joint_source: "lcm_leg"        # lcm_leg(50Hz 常规模式) | lcm_spi(仅电机模式) | ros
     odom_source: "lcm_localization"  # ros | lcm_localization
 
     # ---- 输入话题（模板面） ---------------------------------------------
