@@ -255,6 +255,10 @@ class TrtPolicy(object):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--engine", default="/home/mi/kick_policy_fp16.trt")
+    p.add_argument("--backend", default="twist",
+                   choices=["twist", "servo"],
+                   help="twist: /{ns}/cmd_vel（官方 velocity_adaptor 桥，推荐）| "
+                        "servo: 直发 protocol/MotionServoCmd")
     p.add_argument("--dog-tracker", default="GEXY2")
     p.add_argument("--ball-tracker", default="ball")
     p.add_argument("--goal-tracker", default="goal_left")
@@ -263,6 +267,11 @@ def main():
     p.add_argument("--vel-limit", default="1.6,0.55,2.5")
     p.add_argument("--rate", type=float, default=50.0)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--flatten-tilt", dest="flatten_tilt",
+                   action="store_true", default=True,
+                   help="只用 tracker yaw（置零 roll/pitch），消除安装倾角偏置")
+    p.add_argument("--no-flatten-tilt", dest="flatten_tilt",
+                   action="store_false")
     p.add_argument("--joint-timeout", type=float, default=0.10)
     p.add_argument("--pose-timeout", type=float, default=0.25)
     p.add_argument("--ball-timeout", type=float, default=0.30)
@@ -274,7 +283,7 @@ def main():
         fixed_goal = tuple(float(v) for v in a.goal_xy.split(","))
 
     import rclpy
-    from geometry_msgs.msg import PoseStamped
+    from geometry_msgs.msg import PoseStamped, Twist
     from protocol.msg import MotionServoCmd, MotionStatus
     from rclpy.node import Node
 
@@ -294,12 +303,34 @@ def main():
         st["gyro"] = omega
         st["t_odom"] = time.time()
 
+    print("[kick] LCM reader 启动...")
     LcmReader(on_joints, on_odom)
-
+    print("[kick] rclpy init...")
     rclpy.init()
     node = Node("kick_policy_jetson")
-    pub = node.create_publisher(MotionServoCmd,
-                                "/%s/motion_servo_cmd" % NS, 10)
+    print("[kick] node 创建完成")
+    if a.backend == "twist":
+        pub = node.create_publisher(Twist, "/%s/cmd_vel" % NS, 10)
+    else:
+        pub = node.create_publisher(MotionServoCmd,
+                                    "/%s/motion_servo_cmd" % NS, 10)
+
+    def publish_cmd(cmd):
+        if a.backend == "twist":
+            msg = Twist()
+            msg.linear.x = float(cmd[0])
+            msg.linear.y = float(cmd[1])
+            msg.angular.z = float(cmd[2])
+            pub.publish(msg)
+            return
+        gait, limited = select_gait(cmd[0], cmd[1], cmd[2])
+        msg = MotionServoCmd()
+        msg.motion_id = GAITS[gait]["id"]
+        msg.cmd_type = 1
+        msg.value = 2
+        msg.vel_des = [float(limited[0]), float(limited[1]), float(limited[2])]
+        msg.step_height = [0.05, 0.05]
+        pub.publish(msg)
 
     def pose_cb(key):
         def cb(msg):
@@ -308,7 +339,12 @@ def main():
             with lock:
                 st[key] = np.array([p.x, p.y])
                 if key == "robot_xy":
-                    st["quat"] = np.array([o.x, o.y, o.z, o.w])
+                    q = np.array([o.x, o.y, o.z, o.w])
+                    if a.flatten_tilt:
+                        yw = yaw_from_quat(q)
+                        q = np.array([0.0, 0.0, np.sin(yw / 2.0),
+                                      np.cos(yw / 2.0)])
+                    st["quat"] = q
                     st["t_pose"] = now
                 elif key == "ball":
                     st["t_ball"] = now
@@ -331,6 +367,7 @@ def main():
     node.create_subscription(MotionStatus, "/%s/motion_status" % NS,
                              status_cb, 10)
 
+    print("[kick] TRT 引擎加载...")
     policy = TrtPolicy(a.engine)
     print("[kick] engine loaded: %s (bindings=%s)" % (a.engine,
                                                       policy.names))
@@ -393,15 +430,7 @@ def main():
         cmd = tick()
         if cmd is None or a.dry_run:
             return
-        gait, limited = select_gait(cmd[0], cmd[1], cmd[2])
-        msg = MotionServoCmd()
-        msg.motion_id = GAITS[gait]["id"]
-        msg.cmd_type = 1
-        msg.value = 2
-        msg.vel_des = [float(limited[0]), float(limited[1]),
-                       float(limited[2])]
-        msg.step_height = [0.05, 0.05]
-        pub.publish(msg)
+        publish_cmd(cmd)
 
     node.create_timer(1.0 / a.rate, on_timer)
     try:
@@ -411,13 +440,7 @@ def main():
     finally:
         try:
             if not a.dry_run:
-                msg = MotionServoCmd()
-                msg.motion_id = GAITS["slow"]["id"]
-                msg.cmd_type = 1
-                msg.value = 2
-                msg.vel_des = [0.0, 0.0, 0.0]
-                msg.step_height = [0.05, 0.05]
-                pub.publish(msg)
+                publish_cmd(np.zeros(3))
         except Exception:
             pass
         node.destroy_node()
