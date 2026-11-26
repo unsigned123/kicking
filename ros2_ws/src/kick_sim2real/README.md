@@ -1,5 +1,10 @@
 # kick_sim2real — 上层策略实机部署（ROS2）
 
+> **实机接口完整清单（ROS2 话题 / LCM 通道 / 消息字段 / 动捕 tracker / 命名空间来历）**
+> 见仓库 `docs/SIM2REAL_INTERFACES.md`。本机（cyberdog2-69）关键值：
+> 命名空间 `gugugaga`、VRPN tracker **GEXY2**、关节 = LCM `leg_control_data` 50 Hz。
+
+
 把 `hierarchical_kick` 训练出的**上层 3 维速度命令策略**（55 维 obs → `[vx, vy, wz]`）
 部署到 CyberDog2 实机：上层策略在 PC/NX 上以 50Hz 运行，速度命令发给**出厂自带速度
 控制器**（不是我们训练的冻结低层），球位置来自动捕。

@@ -8,7 +8,7 @@ kick_sim2real:
     dry_run: true                            # 首次联调置 true
 
     # ---- 本体与输出后端 -------------------------------------------------
-    dog_name: "dog0"
+    dog_name: "gugugaga"       # 本机出厂命名空间（来历见 docs/SIM2REAL_INTERFACES.md §5）
     backend: "motion_servo"     # motion_servo | twist | lcm
     # motion_servo → protocol.msg/MotionServoCmd 到 /<dog>/motion_servo_cmd
     #                （出厂速度控制器；步态 303/308/305 自动选择）
@@ -34,7 +34,7 @@ kick_sim2real:
 
     # ---- 位姿来源（方案A：全部取 VRPN 原始话题，天然同系） ----------------
     pose_source: "vrpn"        # vrpn（推荐）| absolute（模板 absolute_coordination 输出）
-    dog_tracker: "dog0"        # 本机 VRPN tracker 名（实机跟踪器：GEXY2/Lizj_dog/...）
+    dog_tracker: "GEXY2"       # 本机 VRPN tracker（cyberdog2-69 = GEXY2）
     ball_tracker: "ball"
     goal_source: "vrpn"        # vrpn（活跟踪门柱）| fixed（用 goal_center_xy）
     goal_tracker: "goal_left"  # 双门场地：选进攻那端（goal_left/goal_right）
